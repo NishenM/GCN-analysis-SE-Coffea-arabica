@@ -1,0 +1,135 @@
+# R script used for validation of hub gene expression profiles from the GSE48915 dataset
+
+1.	
+# Script for processing Arabidopsis expression data
+
+setwd("E:\\Hub\\Expression\\Becker_DEG")
+
+# # Install the annotation package (if not already)
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#   install.packages("BiocManager")
+# BiocManager::install("affy")
+# BiocManager::install("ath1121501.db")
+
+# Load libraries
+library(affy)
+library(ath1121501.db)
+
+# Read CEL files
+data <- ReadAffy()
+
+# Normalize the data
+eset <- mas5(data)
+
+# Extract expression matrix
+exprs_matrix <- exprs(eset)
+
+# log2 transform
+exprs_matrix <- log2(exprs_matrix)
+
+# Map probe IDs to TAIR (Arabidopsis) gene IDs
+# Use ath1121501.db mapping
+probe_ids <- rownames(exprs_matrix)
+tair_ids <- mapIds(ath1121501.db,
+                   keys = probe_ids,
+                   column = "TAIR",
+                   keytype = "PROBEID",
+                   multiVals = "first") 
+
+# Add TAIR IDs as a new column
+exprs_df <- as.data.frame(exprs_matrix)
+exprs_df$TAIR <- tair_ids
+
+# Reorder-TAIR ID is the first column
+exprs_df <- exprs_df[, c("TAIR", setdiff(colnames(exprs_df), "TAIR"))]
+
+# Remove rows with missing TAIR_ID
+exprs_df_filtered <- exprs_df[!is.na(exprs_df$TAIR), ]
+
+# Save final expression matrix
+write.csv(exprs_df_filtered, "arabidopsis_expression_matrix.csv", row.names = TRUE, quote = FALSE)
+
+# Rename the columns for easier reference (based on provided sample names)
+colnames(exprs_df_filtered) <- c("TAIR", 
+                                 "WTD7I1", "WTD7I2", 
+                                 "WTD14I1", "WTD14I2", 
+                                 "WTD14M1", "WTD14M2")
+
+# Calculate the mean for each condition (across replicates)
+exprs_df_filtered$mean_7_day <- rowMeans(exprs_df_filtered[, c("WTD7I1", "WTD7I2")])
+exprs_df_filtered$mean_14_day <- rowMeans(exprs_df_filtered[, c("WTD14I1", "WTD14I2")])
+exprs_df_filtered$mean_mature <- rowMeans(exprs_df_filtered[, c("WTD14M1", "WTD14M2")])
+
+# Select relevant columns (TAIR ID and means)
+exprs_means <- exprs_df_filtered[, c("TAIR", "mean_7_day", "mean_14_day", "mean_mature")]
+
+# Save the summarized expression matrix with mean values
+write.csv(exprs_means, "Becker_DEG.csv", row.names = FALSE, quote = FALSE)
+
+2.
+# Script for filtering expression data by TAIR gene IDs
+
+setwd("E:\\Hub\\Expression\\Becker_DEG")
+
+# Load the necessary library
+library(readr)
+
+# Read the CSV file
+data <- read.csv("Becker_DEG.csv")
+
+# Load the gene IDs
+tair_ids <- read.table("tair_ids_unique.txt", header = FALSE, stringsAsFactors = FALSE)
+
+# Filter the data
+filtered_data <- data[data$TAIR %in% tair_ids$V1, ]
+
+# Save the filtered data to a CSV file
+write.csv(filtered_data, "filtered_data_DEG.csv", row.names = FALSE)
+
+3.
+# Script for generating a gene expression heatmap
+
+# Load required libraries
+library(tidyverse)
+library(reshape2)
+library(ggplot2)
+
+# Load the filtered data
+data <- read.csv("filtered_data_DEG_1.csv")
+
+# Reshape data from wide to long format for plotting
+data_long <- melt(data,
+                  id.vars = "TAIR",
+                  variable.name = "Condition", 
+                  value.name = "Expression")
+
+# Ensure the correct order of conditions
+data_long$Condition <- factor(data_long$Condition,
+                              levels = c("WT_7_day", "WT_14_day", "WT_mature_SE"))
+
+# Save the heatmap as a PDF
+pdf("Gene_Expression_Heatmap_DEG_1.pdf", width = 9, height = 16)
+
+ggplot(data_long, aes(x = Condition, y = TAIR, fill = Expression)) +
+  geom_tile(color = "white") +
+  scale_fill_gradientn(
+    colours = c("lightblue", "lightgreen", "yellow", "orange", "red"),
+    limits = c(0, max(data_long$Expression, na.rm = TRUE)),
+    name = "Expression"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12, hjust = 0.5),
+    panel.grid = element_blank()
+  ) +
+  labs(x = "", y = "Gene ID", title = "Gene Expression Heatmap (MAS5 Normalized)") +
+  guides(
+    fill = guide_colorbar(
+      barheight = 75,              
+      frame.colour = "black",   
+      frame.linewidth = 0.1   
+    )
+  )
+
+dev.off()
