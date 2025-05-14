@@ -1,0 +1,129 @@
+# R script used for processing and visualizing differentially expressed genes 
+1.	
+# Script for processing and visualization of DEGs
+
+setwd("E:\\DEG Analysis")
+
+# Required Libraries
+library(dplyr)
+library(ggplot2)
+
+# Function to process a single file and identify DEGs
+process_file <- function(filepath, log2fc_threshold = 1, pvalue_threshold = 0.05) {
+  data <- read.table(filepath, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+  
+  # Filter DEGs
+  degs <- data %>%
+    filter(p_value <= pvalue_threshold) %>%
+    mutate(regulation = case_when(
+      log2.fold_change. >= log2fc_threshold ~ "Upregulated",
+      log2.fold_change. <= -log2fc_threshold ~ "Downregulated",
+      TRUE ~ "Not significant"
+    )) %>%
+    filter(regulation != "Not significant")
+  
+  return(degs)
+}
+
+# Define folder names
+folders <- c("L1-D1", "D1-D2", "D2-D3", "D3-C1", "C1-C2", "C2-C3", "C3-R1", 
+             "R1-R2", "R2-R3", "R3-R4", "R4-E1")
+
+# Initialize results and DEG lists
+results <- list()
+deg_lists <- list()
+
+# Process all files
+for (folder in folders) {
+  filepath <- file.path(folder, "gene_exp.diff")
+  
+  if (file.exists(filepath)) {
+    degs <- process_file(filepath)
+    results[[folder]] <- degs
+    deg_lists[[folder]] <- degs$gene_id
+    
+    # Save DEG list as text file
+    write.table(degs$gene_id, file = paste0(folder, "_DEGs.txt"), row.names = FALSE, col.names = FALSE, quote = FALSE)
+    
+    # Save detailed DEG information as CSV
+    write.csv(degs, file = paste0(folder, "_DEGs.csv"), row.names = FALSE)
+  }
+}
+
+# Summarize DEGs for visualization
+deg_summary <- data.frame(
+  Comparison = names(results),
+  Upregulated = sapply(results, function(deg) sum(deg$regulation == "Upregulated")),
+  Downregulated = sapply(results, function(deg) sum(deg$regulation == "Downregulated"))
+)
+
+# Add counts for labels
+deg_summary$TotalUp <- deg_summary$Upregulated
+deg_summary$TotalDown <- deg_summary$Downregulated
+
+# Ensure the exact order for the x-axis
+deg_summary$Comparison <- factor(deg_summary$Comparison, levels = folders)
+
+# Save bar graph to PDF
+pdf("01_bar_graph_degs.pdf", width = 10, height = 8)  
+
+ggplot(deg_summary, aes(x = Comparison)) +
+  # Upregulated bars
+  geom_bar(aes(y = Upregulated, fill = "Upregulated"), 
+           stat = "identity", position = position_dodge(width = 0.5)) +  
+  # Downregulated bars
+  geom_bar(aes(y = -Downregulated, fill = "Downregulated"), 
+           stat = "identity", position = position_dodge(width = 0.5)) +  
+  # Add numbers for upregulated closer to x-axis
+  geom_text(aes(y = max(Upregulated) * 0.06, label = TotalUp), size = 3.5, color = "white") +  
+  # Add numbers for downregulated closer to x-axis
+  geom_text(aes(y = -(max(Downregulated) * 0.06), label = TotalDown), size = 3.5, color = "white") +  
+  scale_y_continuous(labels = abs) +
+  scale_fill_manual(
+    values = c("Upregulated" = "#66c2a5", "Downregulated" = "#fc8d62"),
+    labels = c("Upregulated Genes", "Downregulated Genes")  # Custom labels for the legend
+  ) +
+  labs(
+    title = "Differentially Expressed Genes",
+    x = "Stages",
+    y = "Frequency",
+    fill = NULL  # This removes the "Regulation" label in the legend
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(hjust = 0.5, vjust = 1),
+    legend.position = "bottom",
+  )
+
+dev.off()
+
+2.
+# Script for visualizing the overlap of DEGs across multiple comparisons
+
+library(UpSetR)
+
+# Create a binary presence-absence matrix for UpSet plot
+gene_list <- unique(unlist(deg_lists))
+upset_data <- as.data.frame(do.call(cbind, lapply(deg_lists, function(x) {
+  as.integer(gene_list %in% x)
+})))
+
+# Set row names (gene IDs)
+rownames(upset_data) <- gene_list
+
+# Set column names (comparisons)
+colnames(upset_data) <- names(deg_lists)
+
+# Open PDF file (width and height can be adjusted)
+pdf("DEG_UpSetPlot.pdf", width = 18, height = 8)
+
+# Generate UpSet plot
+upset(upset_data, 
+      sets = colnames(upset_data),
+      sets.bar.color = "steelblue", 
+      order.by = "freq",
+      keep.order = TRUE,
+      text.scale = rep(1.0, 6))
+
+# Close the PDF device properly
+dev.off() 
