@@ -1,0 +1,284 @@
+# R script used for correlation analysis of module eigengenes with developmental stages and identification of hub genes 
+# Script for correlation analysis of module eigengenes with developmental stages
+
+setwd("E:\\WGCNA_V04")
+
+rm(list = ls(all.names = TRUE))
+
+library(WGCNA)
+options(stringsAsFactors = FALSE)
+library(grDevices)
+
+#load data
+load(file = "dataInput.RData")
+
+# Load network data 
+load(file = "networkConstruction.RData")
+
+# Define numbers of genes and samples
+nGenes = ncol(data)
+nSamples = nrow(data)
+
+# Recalculate MEs with color
+MEs0 = moduleEigengenes(data, moduleColors)$eigengenes
+MEs0 = removeGreyME(MEs0,greyMEName = "MEgrey")
+MEs = orderMEs(MEs0)
+ME_names = colnames(MEs)
+
+L1 = colMeans(MEs[1:3,])
+D1 = colMeans(MEs[4:6,])
+D2 = colMeans(MEs[7:9,])
+D3 = colMeans(MEs[10:12,])
+C1 = colMeans(MEs[13:15,])
+C2 = colMeans(MEs[16:18,])
+C3 = colMeans(MEs[19:21,])
+R1 = colMeans(MEs[22:24,])
+R2 = colMeans(MEs[25:27,])
+R3 = colMeans(MEs[28:30,])
+R4 = colMeans(MEs[31:33,])
+E1 = colMeans(MEs[34:36,])
+MEs = data.frame(rbind(L1,D1,D2,D3,C1,C2,C3,R1,R2,R3,R4,E1))
+colnames(MEs) = ME_names
+rm(L1,D1,D2,D3,C1,C2,C3,R1,R2,R3,R4,E1)
+head(MEs)
+
+#trait data
+trait = matrix(c(1,0,0,0,0,0,0,0,0,0,0,0,
+                 0,1,0,0,0,0,0,0,0,0,0,0,
+                 0,0,1,0,0,0,0,0,0,0,0,0,
+                 0,0,0,1,0,0,0,0,0,0,0,0,
+                 0,0,0,0,1,0,0,0,0,0,0,0,
+                 0,0,0,0,0,1,0,0,0,0,0,0,
+                 0,0,0,0,0,0,1,0,0,0,0,0,
+                 0,0,0,0,0,0,0,1,0,0,0,0,
+                 0,0,0,0,0,0,0,0,1,0,0,0,
+                 0,0,0,0,0,0,0,0,0,1,0,0,
+                 0,0,0,0,0,0,0,0,0,0,1,0,
+                 0,0,0,0,0,0,0,0,0,0,0,1),byrow = T,nrow = 12,ncol = 12)
+colnames(trait) = row.names(MEs)
+rownames(trait) = row.names(MEs)
+trait = as.data.frame(trait)
+
+
+design = matrix(c(1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,
+                 0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,
+                 0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0, 
+                0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,
+               0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0, 
+              0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,
+               0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0, 
+              0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,
+               0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0, 
+           0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,
+                 0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,
+               0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1
+),byrow = F,nrow = 12,ncol = 36)
+colnames(design) = c('I','I','I','II','II','II','III','III','III','IV','IV','IV',
+                     'v','v','v','vI','vI','vI','vII','vII','vII','vIII','vIII','vIII',
+                     'IX','IX','IX','X','X','X','XI','XI','XI','XII','XII','XII')
+row.names(design) = row.names(MEs)
+design = data.frame(t(design))
+
+# Compute module-trait correlations
+moduleTraitCor = cor(MEs, trait, use = "complete.obs")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
+
+# Save the plot to a PDF file
+pdf(file = "Plots/06_1-Module-trait relationship.pdf", width = 12, height = 9, 
+    pagecentre = T, paper = "a4r")
+
+# Add * mark for significant correlations
+significant = (abs(moduleTraitCor) > 0.8) & (moduleTraitPvalue <= 0.05)
+textMatrix = signif(moduleTraitPvalue, 2)
+textMatrix[significant] = paste0(textMatrix[significant], " *")
+dim(textMatrix) = dim(moduleTraitCor)
+par(mar = c(2, 6, 2, 2))
+
+# Plot the heatmap
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = c("Stage L1", "Stage D1", "Stage D2", "Stage D3", "Stage C1", "Stage C2", "Stage C3", 
+                           "Stage R1", "Stage R2", "Stage R3", "Stage R4", "Stage E1"),
+               yLabels = names(MEs),
+               ySymbols = names(MEs),
+               colorLabels = FALSE,
+               xLabelsAngle = 0,
+               xLabelsAdj = c(0.5, 0.5),
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.7,
+               cex.lab = 0.7,
+               zlim = c(-1, 1),
+               plotLegend = TRUE,  
+               main = paste("Module-trait Relationships"))
+
+dev.off()
+
+# Select significant correlations and p-values
+cor = abs(moduleTraitCor) >= 0.8
+p = round(moduleTraitPvalue, 3) <= 0.05
+xx = cor & p
+write.csv(xx, 'Module-Trait.csv', quote = FALSE)
+
+# Use the trait matrix as weights
+weights <- trait
+
+# Names (colors) of the modules
+modNames = substring(names(MEs), 3)
+
+# Correlation of data with MEs
+data_cor = WGCNA::cor(data, MEs0, use = "p")
+geneModuleMembership = as.data.frame(data_cor)
+MMPvalue = as.data.frame(corPvalueStudent(as.matrix(geneModuleMembership), nSamples))
+names(geneModuleMembership) = paste("MM", modNames, sep = "")
+names(MMPvalue) = paste("p.MM", modNames, sep = "")
+
+# Correlation of data with design (traits)
+dt_cor = WGCNA::cor(data, design, use = "p")
+geneTraitSignificance = as.data.frame(dt_cor)
+GSPvalue = as.data.frame(corPvalueStudent(as.matrix(geneTraitSignificance), nSamples))
+names(geneTraitSignificance) = paste("GS.", names(design), sep = "")
+names(GSPvalue) = paste("p.GS.", names(design), sep = "")
+head(GSPvalue)
+
+# Save the gene significance results to a CSV file
+sig_file = cbind.data.frame(moduleColors, geneTraitSignificance, GSPvalue)
+write.csv(sig_file, 'Gene_significance.csv', quote = FALSE)
+
+# Summarize gene significance for each module
+gs = data.frame()
+clr = unique(moduleColors)
+for (module in clr) {
+  stg = sig_file[sig_file$moduleColors == module,]
+  sum = colSums(stg[2:13])
+  sum = cbind(module, sum)
+  gs = rbind(gs, sum)
+}
+gs$stage = c("Stage L1", "Stage D1", "Stage D2", "Stage D3", "Stage C1", "Stage C2", "Stage C3", 
+             "Stage R1", "Stage R2", "Stage R3", "Stage R4", "Stage E1")
+row.names(gs) = NULL
+write.csv(gs, "GS-stages.csv", quote = FALSE)
+
+# GS Plot
+library(ggplot2)
+library(patchwork)
+library(tools)
+library(stringr)
+
+# Unique stages
+stages = unique(gs$stage)
+
+# Define the modules for the entire panel
+modules = c(
+  "Green", "Brown", "Blue", "Lightcyan", "Tan", "Yellow", "Black", "Red", 
+  "Turquoise", "Cyan", "Grey60", "Magenta", "Pink", "Salmon", "Grey", 
+  "Greenyellow", "Darkgreen", "Midnightblue", "Purple", "Royalblue", 
+  "Darkred", "Lightgreen", "Lightyellow"
+)
+clr = c(
+  "Green", "Brown", "Blue", "Lightcyan", "Tan", "Yellow", "Black", "Red", 
+  "Turquoise", "Cyan", "Grey60", "Magenta", "Pink", "Salmon", "Grey", 
+  "Greenyellow", "Darkgreen", "Midnightblue", "Purple", "Royalblue", 
+  "Darkred", "Lightgreen", "Lightyellow"
+)
+
+# Create a named vector to map each module to its color
+color_mapping = setNames(clr, modules)
+
+# Ensure only relevant modules are included
+gs = gs[gs$module != "grey",]
+
+# Calculate the maximum value for 'sum' across all stages for consistent scaling
+max_sum = max(abs(as.numeric(gs$sum)))
+
+# Create an empty list to store individual plots
+plot_list = list()
+
+# Generate plots for each stage
+for (x in stages) {
+  gs_mod = gs[gs$stage == x,]
+  gs_mod$sum = abs(as.numeric(gs_mod$sum))
+  
+  # Capitalize the first letter of each module name
+  gs_mod$module = toTitleCase(gs_mod$module)
+  
+  # Generate the plot with the same y-axis scale across all plots
+  p = ggplot(data = gs_mod, aes(x = module, y = sum, fill = module)) +
+    geom_bar(stat = "identity") +
+    xlab(x) + ylab("Gene significance") +
+    scale_fill_manual(values = color_mapping) +  # Ensure correct mapping
+    scale_y_continuous(limits = c(0, max_sum)) +  # Set consistent y-axis scale
+    theme(
+      axis.text.x = element_blank(), 
+      axis.ticks.x = element_blank(),
+      legend.position = "none",  # Remove legend for individual plots
+      panel.border = element_rect(color = "black", fill = NA, size = 0.5)
+    ) +
+    theme(plot.margin = margin(1, 1, 1, 1, "cm"))  # Increase margins for clarity
+  plot_list[[x]] = p
+}
+
+# Combine all plots into a 3x4 matrix layout with space for the legend
+combined_plot = wrap_plots(plot_list) + 
+  plot_layout(ncol = 4, nrow = 3, guides = "collect") +  # Arrange plots in a 3x4 matrix
+  theme(
+    plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm")
+  )
+
+color_mapping = setNames(clr, modules)
+
+# Generate the plot and adjust the legend with the new color order
+combined_plot_with_legend = combined_plot + 
+  guides(fill = guide_legend(
+    title = "Module", 
+    title.position = "top",
+    ncol = 1,  # One column for vertical legend
+    keyheight = unit(1.6, "cm"),  # Increase key height
+    keywidth = unit(1.6, "cm"),   # Increase key width
+    label.position = "right",
+    reverse = FALSE  # Keep color order as is (from black to yellow)
+  )) + 
+  theme(legend.position = "right",  # Position legend on the right
+        legend.justification = c(1, 0.5),  # Center the legend vertically on the right
+        legend.title = element_text(size = 16),  # Increase legend title text size
+        legend.text = element_text(size = 14))  # Increase legend label text size
+
+# Save the combined plot as a PDF with increased size
+ggsave("Plots/10-GS-Combined-Plot.pdf", plot = combined_plot_with_legend, width = 50, height = 40, units = "cm", dpi = 300, device = "pdf")
+
+# Hub Genes Detection 
+kme = signedKME(data, MEs0, exprWeights = NULL, MEWeights = NULL, outputColumnName = "kME", 
+                corFnc = "cor", corOptions = "use = 'p', method = 'pearson'" )
+datafile = data.frame(cbind(moduleColors,geneTraitSignificance, geneModuleMembership,kme))
+
+for (module in modNames) {
+  exp = datafile[datafile$moduleColors == module,]
+  path = paste("Export/GS-MM-kME-",module,".csv",sep = "")
+  write.csv(exp,path,quote = F)
+}
+
+annot = read.csv('annotation.csv')
+clr = sort(unique(moduleColors))
+clr = clr[clr != "grey"]
+
+hubs = character()
+for (i in 1:length(clr)) {
+  dt = geneModuleMembership[,i]
+  kk = order(dt, decreasing = T)
+  nm = rownames(geneModuleMembership)[kk]
+  top10 = nm[1:10]  
+  hubs = cbind(hubs, top10)
+}
+
+# Convert hubs to a data frame
+hubs = as.data.frame(hubs)
+colnames(hubs) = clr
+
+# Save the top 10 hub genes for each module
+write.csv(hubs, 'Top_10_hub_genes.csv', row.names = FALSE, quote = FALSE)
+
+# Convert hubs to a character vector and remove duplicates
+hubgenes = unique(as.character(as.matrix(hubs)))
+
+# Save the list of all hub genes
+write.table(hubgenes, 'All_hub_genes.txt', row.names = FALSE, col.names = FALSE, quote = FALSE)
