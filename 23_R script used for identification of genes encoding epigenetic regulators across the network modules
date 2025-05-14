@@ -1,0 +1,381 @@
+# R script used for identification of genes encoding epigenetic regulators across the network modules
+
+1.	
+# Script for fetching protein sequences and processing input files
+
+setwd("E:\\Epigenetics")
+
+library(rentrez)
+library(dplyr)
+
+# Load gene IDs from the file
+gene_ids <- readLines("EPI_AT.txt")
+
+# Function to retrieve protein sequences from NCBI
+get_protein_sequence <- function(gene_id) {
+  search_result <- entrez_search(db = "protein", term = paste(gene_id, "[Gene ID]"))
+  if (length(search_result$ids) > 0) {
+    protein_id <- search_result$ids[1]
+    seq_data <- entrez_fetch(db = "protein", id = protein_id, rettype = "fasta", retmode = "text")
+    return(seq_data)
+  } else {
+    return(NULL)
+  }
+}
+
+# Open the FASTA file to save sequences
+fasta_file <- file("Protein_Seq_EPI.fasta", "w")
+
+# Create a data frame to store gene IDs and corresponding protein sequence headers
+header_data <- data.frame(Gene_ID = character(), Header = character(), stringsAsFactors = FALSE)
+
+# Iterate over gene IDs and fetch protein sequences, then save to FASTA file
+for (gene_id in gene_ids) {
+  seq_data <- get_protein_sequence(gene_id)
+  if (!is.null(seq_data)) {
+    # Extract the header from the FASTA sequence data
+    header <- strsplit(seq_data, "\n")[[1]][1]  # First line of FASTA contains the header
+    # Save the header and gene ID to the data frame
+    header_data <- rbind(header_data, data.frame(Gene_ID = gene_id, Header = header))
+    
+    # Write the sequence to the FASTA file
+    cat(seq_data, file = fasta_file, append = TRUE)
+  } else {
+    cat("No sequence found for gene ID:", gene_id, "\n")
+  }
+}
+
+# Close the FASTA file after saving
+close(fasta_file)
+
+# Save the gene IDs and headers to a CSV file
+write.csv(header_data, "EPI_AT_Header.csv", row.names = FALSE)
+
+cat("Protein sequences have been saved to Protein_Seq_EPI.fasta.\n")
+cat("Gene IDs and corresponding headers have been saved to EPI_AT_Header.csv.\n")
+
+# Load the data
+data <- read.csv("Epigenetic regulators.csv")
+
+# Extract the first two columns
+extracted_data <- data[, 1:2]
+
+# Add headers to the extracted data
+colnames(extracted_data) <- c("Function_category", "Gene_identifier")
+
+# Save the extracted data with headers to a new CSV file
+write.csv(extracted_data, "Extracted_Epigenetic_regulators.csv", row.names = FALSE)
+
+# Read the CSV files
+epi_header <- read.csv("EPI_AT_Header.csv", stringsAsFactors = FALSE)
+epigenetic_regulators <- read.csv("Extracted_Epigenetic_regulators.csv", stringsAsFactors = FALSE)
+
+# Merge the two datasets by the matching Gene IDs
+merged_data <- merge(epigenetic_regulators, epi_header, by.x = "Gene_identifier", by.y = "Gene_ID")
+
+# Save the merged dataset to a new CSV file
+write.csv(merged_data, "Merged_Epigenetic_Regulators.csv", row.names = FALSE)
+
+# Processing fasta file
+
+setwd("E:\\Epigenetics")
+
+# Read the file
+fasta_lines <- readLines("Protein_Seq_EPI.fasta")
+
+# Find sequence header positions
+header_indices <- grep("^>", fasta_lines)
+
+# Ensure there are at least 158 sequences
+if (length(header_indices) < 158) stop("Not enough sequences in the file.")
+
+# Determine the split point (halfway)
+split_point <- header_indices[length(header_indices) %/% 2]
+
+# Get line index ranges for each part
+part1_indices <- 1:(split_point - 1)
+part2_indices <- split_point:length(fasta_lines)
+
+# Write to separate files
+writeLines(fasta_lines[part1_indices], "part1.fasta")
+writeLines(fasta_lines[part2_indices], "part2.fasta")
+
+cat("Files 'part1.fasta' and 'part2.fasta' created successfully.\n")
+
+2.
+# Script for filtering and extracting unique protein accessions from blastp results
+
+library(dplyr)
+
+# Read the BLAST output file
+blast_data <- read.table("EPI_hits.txt", header = FALSE, sep = "\t", comment.char = "#", stringsAsFactors = FALSE)
+
+# Define the target line
+target_line <- "# Fields: query acc.ver, subject acc.ver, % identity, alignment length, mismatches, gap opens, q. start, q. end, s. start, s. end, evalue, bit score"
+
+# Count occurrences of the target line
+count <- sum(grepl(target_line, readLines("EPI_hits.txt")))
+
+# Print result
+cat("Number of occurrences:", count, "\n")
+
+# Assign column names based on the BLAST output fields
+colnames(blast_data) <- c("Query", "Accession", "Identity", "Alignment_Length", "Mismatches", 
+                          "Gap_Opens", "Q_Start", "Q_End", "S_Start", "S_End", "Evalue", "Bit_Score", "Positives")
+
+# Function to get the first accession starting with "XP"
+get_first_XP <- function(query_hits) {
+  xp_hits <- query_hits %>% filter(startsWith(Accession, "XP_"))
+  if (nrow(xp_hits) > 0) {
+    return(xp_hits$Accession[1])
+  } else {
+    return(NA)  # or query_hits$Accession[1] if you want a fallback
+  }
+}
+
+# Apply the function to each query
+unique_hits <- blast_data %>%
+  group_by(Query) %>%
+  summarise(Selected_Accession = get_first_XP(pick(everything())), .groups = 'drop')
+
+# Save the selected accessions for each query to a file
+write.table(unique_hits, "selected_accessions_EPI.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+# Save only the accessions to a separate file
+write.table(unique(unique_hits$Selected_Accession, "accessions_only_EPI.txt", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+3.
+# Script for merging blastp accessions with functional categories
+
+library(dplyr)
+library(stringr)
+
+# Load the data from the CSV and TXT files
+epigenetic_regulators <- read.csv("Merged_Epigenetic_Regulators.csv")
+selected_accessions <- read.delim("selected_accessions_EPI.txt", sep = "\t")
+
+# Perform a custom join based on exact matching of Query as a part of Header
+merged_data <- epigenetic_regulators %>%
+  rowwise() %>%
+  mutate(Selected_Accession = {
+    # Find the matching Query for each Header where Query is a substring of Header
+    matching_query <- selected_accessions$Selected_Accession[sapply(selected_accessions$Query, function(query) str_detect(Header, fixed(query)))]
+    # If a match is found, return the first match, else NA
+    if (length(matching_query) > 0) matching_query[1] else NA
+  })
+
+# Now select the necessary columns
+final_data <- merged_data %>%
+  select(Gene_identifier, Function_category, Header, Selected_Accession)
+
+# Save the merged data to a new CSV file
+write.csv(final_data, "Merged2_Epigenetic_Regulators.csv", row.names = FALSE)
+4.
+# Script for fetching gene ids
+
+library(rentrez)
+
+# Read protein accession numbers from the file
+protein_accessions <- readLines("accessions_only_EPI.txt") 
+
+# Function to get gene ID from protein accession
+get_gene_id <- function(accession) {
+  # Search for the protein in the NCBI database
+  search_result <- entrez_search(db = "protein", term = accession)
+  
+  # If results found, fetch the corresponding record
+  if (search_result$count > 0) {
+    # Fetch the details of the first hit (protein record)
+    protein_record <- entrez_fetch(db = "protein", id = search_result$ids[1], rettype = "gb", retmode = "text")
+    
+    # Extract gene ID from the protein record (assuming it's available in the record)
+    gene_id <- sub("GeneID:(\\d+)", "\\1", regmatches(protein_record, gregexpr("GeneID:(\\d+)", protein_record))[[1]][1])
+    
+    return(gene_id)
+  } else {
+    return(NA)  # Return NA if no results are found
+  }
+}
+
+# Retrieve gene IDs for each protein accession
+gene_ids <- sapply(protein_accessions, get_gene_id)
+
+# Print gene IDs
+print(gene_ids)
+
+# Save the results to a file
+write.table(data.frame(Accession = protein_accessions, GeneID = gene_ids), "gene_ids_output.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# Save gene IDs only to a separate file
+write.table(gene_ids, "gene_ids_only_EPI.txt", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+5.
+# Script for merging gene ids with functional categories
+
+library(dplyr)
+
+# Read the datasets
+gene_ids <- read.table("gene_ids_output.txt", header = TRUE, sep = "\t")
+epigenetic_regulators <- read.csv("Merged2_Epigenetic_Regulators.csv")
+
+# Check for duplicates in the 'gene_ids' dataset based on the gene ID column
+duplicates_gene_ids <- gene_ids[duplicated(gene_ids$GeneID), ]
+
+# View the duplicated rows
+print(duplicates_gene_ids)
+
+# Count how many duplicates are present
+num_duplicates <- sum(duplicated(gene_ids$GeneID))
+cat("Number of duplicate gene IDs: ", num_duplicates)
+
+# Merge the datasets based on 'Selected_Accession' and 'Accession'
+merged_data <- merge(epigenetic_regulators, gene_ids, by.x = "Selected_Accession", by.y = "Accession")
+
+# Check for duplicates in the merged dataset
+duplicates <- merged_data[duplicated(merged_data), ]
+
+# If you want to view the duplicates
+print(duplicates)
+
+# Optionally, to count how many duplicates are present
+num_duplicates <- sum(duplicated(merged_data))
+cat("Number of duplicate rows: ", num_duplicates)
+
+# Remove duplicate rows from the merged dataset
+merged_data_unique <- merged_data %>% distinct()
+
+# Write the unique (non-duplicate) merged data to a new CSV file
+write.csv(merged_data_unique, "Merged3_Epigenetic_Regulators.csv", row.names = FALSE)
+
+6.
+# Script for Converting the geneInfoEPI.txt file to CSV format
+
+# Read the GeneInfo.txt file into a data frame
+gene_data <- read.csv("GeneInfo_EPI.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "")
+
+# Write the data to a CSV file
+write.csv(gene_data, "GeneInfo_EPI.csv", row.names = FALSE)
+
+
+
+
+7.
+# Script for identifying network modules for genes encoding epigenetic regulators
+
+setwd("E:\\Epigenetics")
+
+# Load data
+load(file = "dataInput.RData")
+load(file = "networkConstruction.RData")
+
+# Define probes based on the loaded data
+probes = names(data)
+
+# Load EPI gene data
+EPI_markers = read.csv('GeneInfo_EPI.csv', header = TRUE)
+
+# Extract gene symbols for matching
+mrk_EPI = EPI_markers$Symbol
+
+# Match EPI gene symbols with module colors
+mrk_module_EPI = moduleColors[match(mrk_EPI, probes)]
+
+# Add the module color information to the EPI data
+EPI_markers = cbind(EPI_markers, mrk_module_EPI)
+
+# Drop rows where module color is NA or "grey"
+EPI_markers = EPI_markers[!is.na(EPI_markers$mrk_module_EPI) & EPI_markers$mrk_module_EPI != "grey", ]
+
+# Write to CSV
+write.csv(EPI_markers, 'EPI-genes-modules.csv', row.names = FALSE)
+
+# Load the necessary data
+EPI_genes_modules = read.csv('EPI-genes-modules.csv')	
+Merged3_Epigenetic_Regulators = read.csv('Merged3_Epigenetic_Regulators.csv')
+
+# Merge the data based on "GeneID"
+merged_data = merge(EPI_genes_modules, Merged3_Epigenetic_Regulators, by = "GeneID")
+
+# Remove duplicates based on "GeneID"
+merged_data = merged_data[!duplicated(merged_data$GeneID), ]
+
+# Write the merged data to a new CSV file
+write.csv(merged_data, 'Final_Merged_Epigenetic_Regulators.csv', row.names = FALSE)
+
+# Select relevant columns from the merged data
+filtered_data = merged_data[, c("GeneID", "Symbol", "description", "other_designations", "mrk_module_EPI", "Function_category")]
+
+# Write the filtered data to a new CSV file
+write.csv(filtered_data, 'Final_Filtered_EPI_Epigenetic_Regulators.csv', row.names = FALSE)
+
+8.
+# Script for visualizing the distribution of genes encoding epigenetic regulators
+
+library(ggplot2)
+library(dplyr)
+library(stringr)
+
+# Read the CSV file
+epi_data <- read.csv("Final_Filtered_EPI_Epigenetic_Regulators.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# Group by Function_category and count the number of genes per mrk_module_EPI
+module_counts <- epi_data %>%
+  group_by(Function_category, mrk_module_EPI) %>%
+  summarise(Gene_Count = n(), .groups = 'drop')
+
+# Convert module counts to data frame
+module_count_df = as.data.frame(module_counts)
+names(module_count_df) = c("Function Category", "Module", "Count")
+module_count_df$Module = as.character(module_count_df$Module)
+
+# Load data
+load(file = "dataInput.RData")
+load(file = "networkConstruction.RData")
+
+# Count the number of genes in each module
+tot_module_counts <- as.data.frame(table(moduleColors[moduleColors != "grey"]))
+# Rename columns
+colnames(tot_module_counts) <- c("Module", "GeneCount")
+
+# Merge module counts and total gene counts
+module_percentage = merge(module_count_df, tot_module_counts, by = "Module", all.x = TRUE)
+
+# Calculate the percentage of EPI markers in each module
+module_percentage$Percentage = (module_percentage$Count / module_percentage$GeneCount) * 100
+
+# Create a mapping for legend labels with only the first letter capitalized
+module_legend_labels <- setNames(str_to_title(unique(module_percentage$Module)), unique(module_percentage$Module))
+
+# Define a color map for module colors
+module_colors <- unique(module_percentage$Module)  
+module_color_map <- setNames(module_colors, module_colors)  
+
+# Prepare data for plotting
+plot_data <- module_percentage  
+
+# Save the plot to a PDF
+pdf("EPI_regulators_distribution.pdf", width = 12, height = 8)
+
+# Visualization: Stacked Bar Chart
+ggplot(module_percentage, aes(x = Percentage, y = `Function Category`, fill = Module)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = module_color_map, name = "Module", labels = module_legend_labels) +  
+  labs(x = "Percentage", y = NULL, 
+       title = "Distribution of EPI Regulators Across Functional Categories") +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),  
+    axis.title.x = element_text(size = 12),  
+    legend.position = "bottom",  
+    legend.direction = "vertical",
+    legend.title = element_text(size = 10, face = "plain"),  
+    legend.text = element_text(size = 10, margin = margin(r = 50,l = 8, unit = "pt")),  
+    legend.box = "vertical",  
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.2),  
+    axis.ticks.length = unit(0.15, "cm"),  
+    axis.ticks = element_line(linewidth = 0.2),  
+    plot.margin = margin(20, 40, 20, 40)  
+  ) +
+  guides(fill = guide_legend(title.position = "top", ncol = 3))
+
+dev.off() dev.off()
