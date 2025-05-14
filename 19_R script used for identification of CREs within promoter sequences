@@ -1,0 +1,181 @@
+# R script used for identification of CREs within promoter sequences
+
+1.	
+# Script for splitting sequences into multiple files and combining the output
+
+setwd("E:\\PLACE")
+
+library(Biostrings)
+
+# Read the FASTA file
+fasta_file <- "upstream_sequences.fasta"
+sequences <- readDNAStringSet(fasta_file)
+
+# Define the number of sequences per file
+sequences_per_file <- 20
+num_files <- ceiling(length(sequences) / sequences_per_file)
+
+# Split and write to new files
+for (i in 1:num_files) {
+  start_idx <- (i - 1) * sequences_per_file + 1
+  end_idx <- min(i * sequences_per_file, length(sequences))
+  
+  subset_sequences <- sequences[start_idx:end_idx]
+  
+  output_file <- paste0("split_sequences_", i, ".fasta")
+  writeXStringSet(subset_sequences, output_file)
+}
+cat("Splitting completed. Files saved as split_sequences_1.fasta to split_sequences_11.fasta.\n"))
+
+# Define output file name
+output_file <- "combined_place_output.txt"
+
+# List all files to be combined
+file_list <- sprintf("%02d.txt", 1:11)
+
+# Open output file for writing
+sink(output_file)
+
+# Read each file and append its content to the output file
+for (file in file_list) {
+  if (file.exists(file)) {
+    cat(readLines(file), sep = "\n")
+  }
+}
+
+sink()
+
+2.
+# Script for calculating the number of hub genes containing each CRE
+
+setwd("E:\\PLACE")
+
+library(dplyr)
+
+# Read the file
+file_path <- "combined_place_output.txt"
+data <- readLines(file_path)
+
+# Identify lines with hub gene identifiers
+hub_gene_lines <- grep("^>LOC", data, value = TRUE)
+hub_gene_indices <- grep("^>LOC", data)
+
+# Identify the start of result sections
+result_start_indices <- grep("^Factor or Site Name", data)
+
+# Extract all factors/sites from result sections
+factor_list <- list()
+current_hub_gene <- NULL
+
+for (i in seq_along(data)) {
+  line <- data[i]
+  
+  # Check if line indicates a new hub gene
+  if (grepl("^>LOC", line)) {
+    current_hub_gene <- line # Store current hub gene
+  }
+  
+  # Extract factors from result section
+  if (grepl("^[A-Za-z0-9]+\\s+\\d+\\s+\\(.*", line)) {
+    factor_name <- strsplit(line, "\\s+")[[1]][1] # Extract first word (factor name)
+    if (!is.null(current_hub_gene)) {
+      if (!factor_name %in% names(factor_list)) {
+        factor_list[[factor_name]] <- c()
+      }
+      factor_list[[factor_name]] <- unique(c(factor_list[[factor_name]], current_hub_gene))
+    }
+  }
+}
+
+# Convert to a data frame with counts
+factor_count_df <- data.frame(
+  "Factor or Site Name" = names(factor_list),
+  "Frequency of CRE" = sapply(factor_list, length)
+)
+# Save to CSV
+write.csv(factor_count_df, "factor_hub_gene_counts.csv", row.names = FALSE)
+
+3.
+# Script for selecting the CRE-related information from the PLACE data file
+
+setwd("E:\\PLACE")
+
+library(dplyr)
+
+# Load the PLACE database (CSV format)
+place_data <- read.csv("place_main.csv", stringsAsFactors = FALSE)
+
+# Display column names to verify structure
+colnames(place_data)
+
+# Load the list of cis-regulatory elements from CisE.txt
+cis_elements <- readLines("CisE_list.txt")
+
+# Check if the "Identifier" column exists in the dataset
+if ("Identifier" %in% colnames(place_data)) {
+  # Filter the dataset to include only rows where Identifier is in CisE.txt
+  filtered_data <- place_data %>% filter(Identifier %in% cis_elements)
+  
+  # Save the filtered data to a new CSV file
+  write.csv(filtered_data, "PLACE_cis_elements_filtered.csv", row.names = FALSE)
+} else {
+  cat("Error: 'Identifier' column not found in the dataset.\nCheck column names with colnames(place_data).")
+}
+
+4.
+# Script for merging the CRE-related information and the count of hub genes
+
+library(dplyr)
+
+# Read the first CSV file (PLACE cis elements)
+place_cis <- read.csv("PLACE_cis_elements_filtered.csv", stringsAsFactors = FALSE)
+
+# Read the second CSV file (Factor Hub Gene Counts)
+factor_hub <- read.csv("factor_hub_gene_counts.csv", stringsAsFactors = FALSE)
+
+# Merge data frames based on the matching column names
+merged_data <- place_cis %>%
+  inner_join(factor_hub, by = c("Identifier" = "Factor.or.Site.Name"))
+
+write.csv(merged_data, "merged_data.csv", row.names = FALSE)
+5.
+# Script for visualizing the distribution of CREs
+
+library(ggplot2)
+library(dplyr)
+library(RColorBrewer)
+
+# Read the factor-hub gene count file
+factor_data <- read.csv("embryo_related_data.csv", check.names = FALSE)
+
+# Correctly rename only the necessary column
+colnames(factor_data)[c(1, 8)] <- c("CRE", "Frequency_of_CRE")
+
+# Sort CRE names alphabetically
+factor_data$CRE <- factor(factor_data$CRE, levels = sort(factor_data$CRE))
+
+# Create a custom color palette dynamically
+num_CREs <- nrow(factor_data)
+custom_colors <- colorRampPalette(brewer.pal(9, "Set3"))(num_CREs)
+
+p <- ggplot(factor_data, aes(x = Frequency_of_CRE, y = CRE, size = Frequency_of_CRE, fill = CRE)) +
+  geom_point(alpha = 0.8, shape = 21, color = "black") +  # Bubbles with black borders
+  geom_text(aes(label = Frequency_of_CRE), vjust = 0.5, hjust = 0.5, size = 3, color = "black") + 
+  scale_size_continuous(range = c(6, 12), name = "Frequency of CRE",
+                        breaks = c(10, 50, 100, 150), labels = c("10", "50", "100", "150")) +
+  scale_fill_manual(values = custom_colors, guide = "none") +  
+  labs(title = "Distribution of Plant CREs in Promoter Regions of Hub Genes",
+       x = "Number of hub genes with the CRE",
+       y = "Cis-acting regulatory elements") +
+  theme_minimal() +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.2),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.ticks = element_line(linewidth = 0.2),
+    plot.margin = margin(20, 40, 20, 40)
+  )
+
+# Save the plot as a PDF
+pdf("CRE_EmbRelated_Distribution_BubblePlot.pdf", width = 10, height = 6)
+print(p)
+dev.off()
