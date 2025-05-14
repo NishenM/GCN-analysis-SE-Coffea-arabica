@@ -1,0 +1,68 @@
+# R script used for gene co-expression network construction and module detection
+# Script for network construction and module detection
+
+setwd("E:/WGCNA_V04")
+
+# Clean environment
+rm(list = ls(all.names = TRUE))
+
+# Load WGCNA package
+library(WGCNA)
+options(stringsAsFactors = FALSE)
+enableWGCNAThreads()
+
+# Load the preprocessed data
+load(file = "dataInput.RData")
+
+# Choose a set of soft-thresholding powers
+powers = c(c(1:10), seq(from = 12, to=30, by=2))
+
+# Call the network topology analysis function
+sft = pickSoftThreshold(data, powerVector = powers, verbose = 5)
+
+# Plot the results for scale-free topology
+pdf(file = "Plots/04-thresholding.pdf", width = 12, height = 9)
+par(mfrow = c(1,2))
+cex1 = 0.9
+
+# Scale-free topology fit index as a function of soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3]) * sft$fitIndices[,2],
+     xlab = "Soft Threshold (power)", ylab = "Scale Free Topology Model Fit, signed R^2",
+     type = "n", main = "Scale independence")
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3]) * sft$fitIndices[,2],
+     labels = powers, cex = cex1, col = "red")
+abline(h = 0.90, col = "red") # R^2 cutoff
+
+# Mean connectivity as a function of soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab = "Soft Threshold (power)", ylab = "Mean Connectivity",
+     type = "n", main = "Mean connectivity")
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels = powers, cex = cex1, col = "red")
+dev.off()
+
+##We choose the power 7, which is the lowest power for which the scale-free topology 
+#fit index curve flattens out upon reaching a high value (in this case, roughly 0.90)
+
+chosen_power = 7
+
+# One-step network construction and module detection
+net = blockwiseModules(data, power = chosen_power, corType = "pearson", networkType = "signed",
+                       TOMType = "signed", minModuleSize = 30,
+                       reassignThreshold = 0, mergeCutHeight = 0.25,
+                       numericLabels = TRUE, pamRespectsDendro = FALSE,
+                       saveTOMs = TRUE, saveTOMFileBase = "TOM", verbose = 3)
+
+#number of modules and module sizes
+table(net$colors)
+
+# plotting modules
+# Convert labels to colors for plotting
+mergedColors = labels2colors(net$colors)
+write.table(table(mergedColors), 'Modules.txt', quote = F, col.names = F)
+
+#saving the environment
+moduleLabels = net$colors
+moduleColors = labels2colors(net$colors)
+geneTree = net$dendrograms[[1]]
+save(MEs, moduleLabels, moduleColors, geneTree,
+     file = "networkConstruction.RData")
