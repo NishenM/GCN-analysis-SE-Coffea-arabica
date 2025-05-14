@@ -1,0 +1,55 @@
+# Script for running Cuffdiff on expression data
+
+#!/bin/bash
+
+# Define directories and files
+BAM_DIR="/media/plantsci2/New Volume/Nishen/48_Sorted BAM Files & Index"
+GTF_FILE="/media/plantsci2/New Volume/Nishen/48_Sorted BAM Files & Index/GCF_003713225.1_Cara_1.0_genomic.gtf"
+OUTPUT_BASE_DIR="cuffdiff_results"
+
+# Define stages with BAM files
+STAGES=(
+    "S01:$BAM_DIR/S01_R1.bam,$BAM_DIR/S01_R2.bam,$BAM_DIR/S01_R3.bam"
+    "S02:$BAM_DIR/S02_R1.bam,$BAM_DIR/S02_R2.bam,$BAM_DIR/S02_R3.bam"
+    "S03:$BAM_DIR/S03_R1.bam,$BAM_DIR/S03_R2.bam,$BAM_DIR/S03_R3.bam"
+    "S04:$BAM_DIR/S04_R1.bam,$BAM_DIR/S04_R2.bam,$BAM_DIR/S04_R3.bam"
+    "S05:$BAM_DIR/S05_R1.bam,$BAM_DIR/S05_R2.bam,$BAM_DIR/S05_R3.bam"
+    "S06:$BAM_DIR/S06_R1.bam,$BAM_DIR/S06_R2.bam,$BAM_DIR/S06_R3.bam"
+    "S07:$BAM_DIR/S07_R1.bam,$BAM_DIR/S07_R2.bam,$BAM_DIR/S07_R3.bam"
+    "S08:$BAM_DIR/S08_R1.bam,$BAM_DIR/S08_R2.bam,$BAM_DIR/S08_R3.bam"
+    "S09:$BAM_DIR/S09_R1.bam,$BAM_DIR/S09_R2.bam,$BAM_DIR/S09_R3.bam"
+    "S10:$BAM_DIR/S10_R1.bam,$BAM_DIR/S10_R2.bam,$BAM_DIR/S10_R3.bam"
+    "S11:$BAM_DIR/S11_R1.bam,$BAM_DIR/S11_R2.bam,$BAM_DIR/S11_R3.bam"
+    "S12:$BAM_DIR/S12_R1.bam,$BAM_DIR/S12_R2.bam,$BAM_DIR/S12_R3.bam"
+)
+
+# Create output base directory if it doesn't exist
+mkdir -p "$OUTPUT_BASE_DIR"
+
+# Loop over adjacent stages for pairwise comparisons
+for ((i=0; i<${#STAGES[@]}-1; i++)); do
+    # Extract stage labels and BAM files for the pairwise comparison
+    STAGE1_LABEL=$(echo "${STAGES[i]}" | cut -d: -f1)
+    STAGE1_BAMS=$(echo "${STAGES[i]}" | cut -d: -f2)
+    STAGE2_LABEL=$(echo "${STAGES[i+1]}" | cut -d: -f1)
+    STAGE2_BAMS=$(echo "${STAGES[i+1]}" | cut -d: -f2)
+
+    # Define output directory for the pairwise comparison
+    OUTPUT_DIR="$OUTPUT_BASE_DIR/${STAGE1_LABEL}_vs_${STAGE2_LABEL}"
+    mkdir -p "$OUTPUT_DIR"
+
+    # Print the command for debugging purposes
+    echo "Running Cuffdiff for $STAGE1_LABEL vs $STAGE2_LABEL"
+
+    # Run Cuffdiff
+    cuffdiff -o "$OUTPUT_DIR" \
+             -L "${STAGE1_LABEL},${STAGE2_LABEL}" \
+             "$GTF_FILE" \
+             "$STAGE1_BAMS" \
+             "$STAGE2_BAMS"
+
+    # Check if Cuffdiff encountered an error
+    if [[ $? -ne 0 ]]; then
+        echo "Error: Cuffdiff failed for $STAGE1_LABEL vs $STAGE2_LABEL"
+    fi
+done
