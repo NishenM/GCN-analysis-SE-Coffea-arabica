@@ -1,0 +1,244 @@
+# Bash scripts and commands for downloading SRA files and generating a gene expression matrix
+
+1.	
+# Install SRA Toolkit
+sudo apt install sra-toolkit
+
+# Configure SRA Toolkit
+vdb-config –interactive 
+2.
+# Script for downloading SRA files and splitting them into FASTQ files
+#!/bin/bash
+
+# Path to the SRR list file
+SRR_LIST="SRR_list.txt"
+
+# Loop through each SRR ID
+while IFS= read -r SRR_ID; do
+    echo "Processing $SRR_ID..."
+    
+    # Download the SRA file
+    prefetch "$SRR_ID"
+    
+    # Convert to FASTQ format
+    fasterq-dump --split-files "$SRR_ID"
+    
+    echo "Completed $SRR_ID"
+done < "$SRR_LIST"
+
+echo "All downloads completed!"
+
+3.
+# Decompress the genomic sequence file
+gunzip GCF_003713225.1_Cara_1.0_genomic.fna.gz
+
+# Decompress the annotation file
+gunzip GCF_003713225.1_Cara_1.0_genomic.gtf.gz
+
+4.
+# Install FastQC
+sudo apt-get install fastqc
+
+# Run FastQC on all .fastq files in the directory
+fastqc *.fastq
+
+5.
+# Install Bowtie2
+sudo apt install bowtie2
+
+# Build the Bowtie2 index
+bowtie2-build GCF_003713225.1_Cara_1.0_genomic.fna Cara_1.0_index
+
+6.
+# Install Samtools
+sudo apt install Samtools
+
+7.
+# Script for mapping FASTQ files to reference genome 
+#!/bin/bash
+
+# Reference genome file
+REFERENCE="GCF_003713225.1_Cara_1.0_genomic.fna"
+INDEX_PREFIX="GCF_003713225.1_Cara_1.0_genomic"  
+
+# Directory containing FASTQ files
+READS_DIR="Reads"
+
+# Array of SRR IDs, dynamically generated from the files in the directory
+SRR_IDS=($(ls $READS_DIR | grep -oP "SRR\d+" | sort -u))
+
+# Check if the reference genome index files exist
+if [[ ! -f "${INDEX_PREFIX}.1.bt2" || ! -f "${INDEX_PREFIX}.2.bt2" || ! -f "${INDEX_PREFIX}.3.bt2" || ! -f "${INDEX_PREFIX}.4.bt2" ]]; then
+    echo "Reference genome index files are missing. Creating Bowtie2 index..."
+    bowtie2-build $REFERENCE $INDEX_PREFIX
+fi
+
+# Loop through each SRR ID to map the FASTQ files using Bowtie2
+for SRR_ID in "${SRR_IDS[@]}"; do
+    R1="${READS_DIR}/${SRR_ID}_1.fastq"
+    R2="${READS_DIR}/${SRR_ID}_2.fastq"
+    
+    # Check if the corresponding FASTQ files exist
+    if [[ -f "$R1" && -f "$R2" ]]; then
+        # Run Bowtie2 to map reads and convert to BAM format using samtools
+        bowtie2 -x $INDEX_PREFIX -1 $R1 -2 $R2 | samtools view -bS - > ${SRR_ID}.bam
+        echo "Generated BAM file for $SRR_ID: ${SRR_ID}.bam"
+        
+        # Sort the BAM file
+        samtools sort ${SRR_ID}.bam -o ${SRR_ID}_sorted.bam
+        echo "Sorted BAM file for $SRR_ID: ${SRR_ID}_sorted.bam"
+        
+        # Index the sorted BAM file
+        samtools index ${SRR_ID}_sorted.bam
+        echo "Indexed BAM file for $SRR_ID: ${SRR_ID}_sorted.bam.bai"
+    else
+        echo "FASTQ files for $SRR_ID not found in the specified directory."
+    fi
+done
+
+8.
+# Use samtools stats to get alignment statistics
+samtools stats ${SRR_ID}_sorted.bam > ${SRR_ID}_sorted_stats.txt
+
+9.
+# Script for transcript reconstruction and quantification
+#!/bin/bash
+
+# Directory containing BAM files
+bam_dir="./"  
+
+# Annotation file (update the path if needed)
+annotation_file="GCF_003713225.1_Cara_1.0_genomic.gtf"
+
+# Number of threads to use
+threads=8
+
+# Enable error handling
+set -e
+
+# Check if annotation file exists
+if [ ! -f "$annotation_file" ]; then
+    echo "Error: Annotation file '$annotation_file' not found!"
+    exit 1
+fi
+
+# Find BAM files
+bam_files=(${bam_dir}*_sorted.bam)
+
+# Check if any BAM files exist
+if [ ${#bam_files[@]} -eq 0 ]; then
+    echo "Error: No BAM files found in '$bam_dir'!"
+    exit 1
+fi
+
+# Process each BAM file
+for bam in "${bam_files[@]}"; do
+    if [ -f "$bam" ]; then
+        # Extract sample name
+        sample_name=$(basename "$bam" _sorted.bam)
+        
+        # Create output directory
+        output_dir="${sample_name}_cufflinks"
+        mkdir -p "$output_dir"
+        
+        # Run Cufflinks
+        echo "Processing $bam..."
+        if cufflinks -p "$threads" -G "$annotation_file" -o "$output_dir" "$bam"; then
+            echo "Cufflinks completed for $bam. Results saved to $output_dir."
+        else
+            echo "Error running Cufflinks for $bam."
+            exit 1
+        fi
+    fi
+done
+
+echo "All BAM files processed successfully!"
+10.
+# Script for merging the assemblies
+#!/bin/bash
+
+# Directory containing the Cufflinks output files (GTF files)
+cufflinks_output_dir="./"
+
+# List file for Cuffmerge
+assembly_list_file="assembly_GTF_list.txt"
+
+# Reference GTF file
+reference_gtf="GCF_003713225.1_Cara_1.0_genomic.gtf"
+
+# Directory to store Cuffmerge output
+output_dir="./cuffmerge_output"
+
+# Number of threads to use
+threads=8
+
+# Check if the assembly list file exists
+if [ ! -f "$assembly_list_file" ]; then
+    echo "Error: Assembly list file '$assembly_list_file' not found!"
+    exit 1
+fi
+
+# Create output directory
+mkdir -p "$output_dir"
+
+# Run Cuffmerge
+echo "Running Cuffmerge to merge assemblies..."
+cuffmerge -p "$threads" \
+          -o "$output_dir" \
+          -g "$reference_gtf" \
+          "$assembly_list_file"
+
+# Check if Cuffmerge ran successfully
+if [ $? -eq 0 ]; then
+    echo "Cuffmerge completed successfully. Output saved to $output_dir/merged.gtf."
+else
+    echo "Error running Cuffmerge."
+    exit 1
+fi
+
+11.
+# Script for normalizing gene expression using Cuffnorm
+#!/bin/bash
+
+# Define input files
+merged_gtf="merged.gtf"  
+output_dir="./cuffnorm_output"  
+
+# Define the list of BAM files (replicates for each sample)
+BAM_LIST="S01_R1.bam S01_R2.bam S01_R3.bam \
+          S02_R1.bam S02_R2.bam S02_R3.bam \
+          S03_R1.bam S03_R2.bam S03_R3.bam \
+          S04_R1.bam S04_R2.bam S04_R3.bam \
+          S05_R1.bam S05_R2.bam S05_R3.bam \
+          S06_R1.bam S06_R2.bam S06_R3.bam \
+          S07_R1.bam S07_R2.bam S07_R3.bam \
+          S08_R1.bam S08_R2.bam S08_R3.bam \
+          S09_R1.bam S09_R2.bam S09_R3.bam \
+          S10_R1.bam S10_R2.bam S10_R3.bam \
+          S11_R1.bam S11_R2.bam S11_R3.bam \
+          S12_R1.bam S12_R2.bam S12_R3.bam"
+
+# Sample labels for each replicate
+labels="S01,S02,S03,S04,S05,S06,S07,S08,S09,S10,S11,S12"
+
+# Number of threads to use
+threads=8
+
+# Create output directory
+mkdir -p "$output_dir"
+
+# Run Cuffnorm
+echo "Running Cuffnorm to normalize expression values..."
+cuffnorm -p "$threads" \
+         -o "$output_dir" \
+         -L "$labels" \
+         "$merged_gtf" \
+         $BAM_LIST
+
+# Check if Cuffnorm completed successfully
+if [ $? -eq 0 ]; then
+    echo "Cuffnorm completed successfully. Results saved to $output_dir."
+else
+    echo "Error running Cuffnorm."
+    exit 1
+fi
