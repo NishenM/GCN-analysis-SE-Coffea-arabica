@@ -1,0 +1,242 @@
+# R script used for identification of EMB genes across the network modules
+
+1.	
+# Script for fetching protein sequences
+
+library(rentrez)
+
+# Load gene IDs from the file
+gene_ids <- readLines("EMB_AT.txt")
+
+# Function to retrieve protein sequences from NCBI
+get_protein_sequence <- function(gene_id) {
+  search_result <- entrez_search(db = "protein", term = paste(gene_id, "[Gene ID]"))
+  if (length(search_result$ids) > 0) {
+    protein_id <- search_result$ids[1]
+    seq_data <- entrez_fetch(db = "protein", id = protein_id, rettype = "fasta", retmode = "text")
+    return(seq_data)
+  } else {
+    return(NULL)
+  }
+}
+
+# Open the FASTA file to save sequences
+fasta_file <- file("Protein_Seq.fasta", "w")
+
+# Iterate over gene IDs and fetch protein sequences, then save to FASTA file
+for (gene_id in gene_ids) {
+  seq_data <- get_protein_sequence(gene_id)
+  if (!is.null(seq_data)) {
+    cat(seq_data, file = fasta_file, append = TRUE)
+  } else {
+    cat("No sequence found for gene ID:", gene_id, "\n")
+  }
+}
+
+# Close the file after saving
+close(fasta_file)
+
+cat("Protein sequences have been saved to Protein_Seq.fasta.\n")
+
+# Read the file
+fasta_lines <- readLines("Protein_Seq.fasta")
+
+# Find sequence header positions
+header_indices <- grep("^>", fasta_lines)
+
+# Ensure there are at least 510 sequences
+if (length(header_indices) < 510) stop("Not enough sequences in the file.")
+
+# Determine the split points
+split_points <- c(header_indices[c(128, 256, 384)], length(fasta_lines) + 1)
+
+# Get line index ranges for each part
+part1_indices <- 1:(split_points[1] - 1)
+part2_indices <- split_points[1]:(split_points[2] - 1)
+part3_indices <- split_points[2]:(split_points[3] - 1)
+part4_indices <- split_points[3]:(split_points[4] - 1)
+
+# Write to separate files
+writeLines(fasta_lines[part1_indices], "part1.fasta")
+writeLines(fasta_lines[part2_indices], "part2.fasta")
+writeLines(fasta_lines[part3_indices], "part3.fasta")
+writeLines(fasta_lines[part4_indices], "part4.fasta")
+
+cat("Files 'part1.fasta', 'part2.fasta', 'part3.fasta', and 'part4.fasta' created successfully.\n")
+
+2.
+# Script for filtering and extracting unique protein accessions from blastp results
+
+library(dplyr)
+
+# Read the BLAST output file
+blast_data <- read.table("hits.txt", header = FALSE, sep = "\t", comment.char = "#", stringsAsFactors = FALSE)
+
+# Define the target line
+#target_line <- "# Fields: query acc.ver, subject acc.ver, % identity, alignment length, mismatches, gap opens, q. start, q. end, s. start, s. end, evalue, bit score"
+
+# Count occurrences of the target line
+#count <- sum(grepl(target_line, readLines("hits.txt")))
+
+# Print result
+#cat("Number of occurrences:", count, "\n")
+
+# Assign column names based on the BLAST output fields
+colnames(blast_data) <- c("Query", "Accession", "Identity", "Alignment_Length", "Mismatches", 
+                          "Gap_Opens", "Q_Start", "Q_End", "S_Start", "S_End", "Evalue", "Bit_Score", "Positives")
+
+# Function to get the first accession starting with "XP"
+get_first_XP <- function(query_hits) {
+  xp_hits <- query_hits %>% filter(startsWith(Accession, "XP_"))
+  if (nrow(xp_hits) > 0) {
+    return(xp_hits$Accession[1])
+  } else {
+    return(NA)  # or query_hits$Accession[1] if you want a fallback
+  }
+}
+
+# Apply the function to each query
+unique_hits <- blast_data %>%
+  group_by(Query) %>%
+  summarise(Selected_Accession = get_first_XP(pick(everything())), .groups = 'drop')
+
+# Save the selected accessions for each query to a file
+write.table(unique_hits, "selected_accessions.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+# Save only the accessions to a separate file
+write.table(unique_hits$Selected_Accession, "accessions_only.txt", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+3.
+# Script for fetching gene ids
+
+library(rentrez)
+
+# Read protein accession numbers from the file
+protein_accessions <- readLines("accessions_only.txt")
+
+# Function to get gene ID from protein accession
+get_gene_id <- function(accession) {
+  # Search for the protein in the NCBI database
+  search_result <- entrez_search(db = "protein", term = accession)
+  
+  # If results found, fetch the corresponding record
+  if (search_result$count > 0) {
+    # Fetch the details of the first hit (protein record)
+    protein_record <- entrez_fetch(db = "protein", id = search_result$ids[1], rettype = "gb", retmode = "text")
+    
+    # Extract gene ID from the protein record (assuming it's available in the record)
+    gene_id <- sub("GeneID:(\\d+)", "\\1", regmatches(protein_record, gregexpr("GeneID:(\\d+)", protein_record))[[1]][1])
+    
+    return(gene_id)
+  } else {
+    return(NA)  # Return NA if no results are found
+  }
+}
+
+# Retrieve gene IDs for each protein accession
+gene_ids <- sapply(protein_accessions, get_gene_id)
+
+# Print gene IDs
+print(gene_ids)
+
+# Save the results to a file
+write.table(data.frame(Accession = protein_accessions, GeneID = gene_ids), "gene_ids_output.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# Save gene IDs only to a separate file
+write.table(gene_ids, "gene_ids_only.txt", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+4.
+# Script for converting the geneInfoEMB.txt file to CSV format
+
+# Read the GeneInfo.txt file into a data frame
+gene_data <- read.csv("GeneInfoEMB.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "")
+
+# Write the data to a CSV file
+write.csv(gene_data, "GeneInfoEMB.csv", row.names = FALSE)
+
+5.
+# Script for identifying network modules for each EMB gene
+
+setwd("E:\\EMB")
+
+rm(list = ls(all.names = TRUE))
+options(stringsAsFactors = F)
+
+# Load data
+load(file = "dataInput.RData")
+load(file = "networkConstruction.RData")
+
+# Define probes based on the loaded data
+probes = names(data)
+
+# Load EMB gene data
+EMB_markers = read.csv('GeneInfoEMB.csv', header = TRUE)
+
+# Extract gene symbols for matching
+mrk_EMB = EMB_markers$Symbol
+
+# Match EMB gene symbols with module colors
+mrk_module_EMB = moduleColors[match(mrk_EMB, probes)]
+
+# Add the module color information to the EMB data
+EMB_markers = cbind(EMB_markers, mrk_module_EMB)
+
+# Drop rows where module color is NA or "grey"
+EMB_markers = EMB_markers[!is.na(EMB_markers$mrk_module_EMB) & EMB_markers$mrk_module_EMB != "grey", ]
+
+# Write to CSV
+write.csv(EMB_markers, 'EMB-genes-modules.csv', row.names = FALSE)
+
+6.
+# Script for visualizing the distribution of EMB genes across modules
+
+# Load necessary libraries
+library(ggplot2)
+library(tools)
+library(scales)
+library(stringr)
+
+# Create a table to count EMB markers in each module
+module_count = table(mrk_module_EMB)
+
+# Remove the "grey" module from the count table
+module_count = module_count[names(module_count) != "grey"]
+
+# Count the number of genes in each module
+tot_module_counts <- as.data.frame(table(moduleColors[moduleColors != "grey"]))
+
+# Rename columns
+colnames(tot_module_counts) <- c("Module", "GeneCount")
+
+# Convert module counts to data frame
+module_count_df = as.data.frame(module_count)
+names(module_count_df) = c("Module", "Count")
+module_count_df$Module = as.character(module_count_df$Module)
+
+# Merge module counts and total gene counts
+module_percentage = merge(module_count_df, tot_module_counts, by = "Module", all.x = TRUE)
+
+# Calculate the percentage of EMB markers in each module
+module_percentage$Percentage = (module_percentage$Count / module_percentage$GeneCount) * 100
+
+# Use PDF to save the plot
+pdf("EMB_marker_modules_distribution.pdf", width = 8, height = 6)
+
+# Plot with custom styling
+ggplot(module_percentage, aes(x = Module, y = Percentage)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  theme_minimal() +
+  labs(title = "EMB Markers Percentage Across Modules", x = "Modules", y = "Gene Percentage (%)") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    legend.position = "none",  # Remove legend
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.2),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.ticks = element_line(linewidth = 0.2),
+    plot.margin = margin(20, 40, 20, 40)
+  ) +
+  geom_text(aes(label = sprintf("%.1f", Percentage)), vjust = -0.5, size = 3) +  # Display values
+  scale_x_discrete(labels = function(x) str_to_title(x))  # Capitalize first letter of each module
+
+# Close the PDF device
+dev.off()
