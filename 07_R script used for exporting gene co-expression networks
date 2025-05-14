@@ -1,0 +1,141 @@
+# R script used for exporting gene co-expression networks
+# Script exporting the gene co-expression network for each module
+
+rm(list = ls(all.names = TRUE))
+
+# Load Required Data
+setwd("D:/Desktop/WGCNA_V04")
+
+library(WGCNA)
+library(dynamicTreeCut)
+
+# Allow multi-threading
+enableWGCNAThreads()
+
+# Load data files
+load(file = "dataInput.RData")            
+load(file = "networkConstruction.RData") 
+load(file = "TOM_signed.RData")       
+
+# Load annotation file
+annot = read.csv("Annotation.csv", stringsAsFactors = FALSE)
+
+# Extract gene names
+probes = names(data)
+
+# Identify unique modules
+uniqueModules = unique(moduleColors)
+
+
+# Split Modules if More Than 1000 Genes 
+for (mod in uniqueModules) {
+  
+  # Identify genes in the module
+  modGenes = probes[moduleColors == mod]
+  
+  # Check if the module has more than 1000 genes
+  if (length(modGenes) > 1000) {
+    
+    # Extract the TOM for the module
+    inModule = moduleColors == mod
+    modTOM = TOM[inModule, inModule]
+    
+    # Perform hierarchical clustering on TOM dissimilarity
+    dissTOM = 1 - modTOM
+    geneTree = hclust(as.dist(dissTOM), method = "average")
+    
+    # Cut the tree into submodules
+    subModules = cutreeDynamic(dendro = geneTree, distM = dissTOM, 
+                               deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = 30)
+    
+    # Assign new colors to submodules
+    newSubModuleColors = labels2colors(subModules)
+    
+    # Update module colors
+    moduleColors[inModule] = paste0(mod, "_", newSubModuleColors)
+    
+    print(paste("Module", mod, "has been split into submodules."))
+  }
+}
+
+# Save updated module colors
+save(moduleColors, file = "moduleColors_with_submodules.RData")
+
+# Set working directory for exporting data
+setwd("D:/Desktop/WGCNA_V04/ExportSub")
+
+# Export network data for each module or submodule
+for (mod in unique(moduleColors)) {
+  print(paste("Processing:", mod))
+  
+  # Select genes in the module
+  inModule = moduleColors == mod
+  modProbes = probes[inModule]
+  
+  if (length(modProbes) > 0) {
+    modGenes = annot$gene_id[match(modProbes, annot$gene_id)]
+    
+    # Extract TOM for selected genes
+    modTOM = TOM[inModule, inModule]
+    
+    # Check if modTOM is a valid matrix and doesn't contain any NA values
+    if (!is.null(modTOM) && is.matrix(modTOM) && !any(is.na(modTOM)) && nrow(modTOM) > 0) {
+      dimnames(modTOM) = list(modProbes, modProbes)
+    } else {
+      print(paste("Skipping empty or invalid TOM matrix for module:", mod))
+      next
+    }
+    
+    # Ensure directory for the module/submodule exists
+    dir_path = file.path("D:/Desktop/WGCNA_V04/ExportSub", mod)
+    if (!dir.exists(dir_path)) {
+      dir.create(dir_path, recursive = TRUE)
+    }
+    
+    # Save TOM matrix as CSV
+    write.csv(modTOM, file = file.path(dir_path, paste0("TOM_", mod, ".csv")))
+    
+    # Calculate connectivity for each gene
+    connectivity = rowSums(modTOM) - diag(modTOM)
+    
+    # Export network for Cytoscape
+    exportNetworkToCytoscape(
+      modTOM,
+      edgeFile = file.path(dir_path, paste0("CytoscapeInput-edges-", mod, ".txt")),
+      nodeFile = file.path(dir_path, paste0("CytoscapeInput-nodes-", mod, ".txt")),
+      weighted = TRUE,
+      threshold = 0.02,
+      nodeNames = modProbes,
+      altNodeNames = modGenes,
+      nodeAttr = data.frame(Module = mod, Connectivity = connectivity)
+    )
+    
+    print(paste("Saved Cytoscape files for:", mod))
+  } else {
+    print(paste("No genes in module:", mod))
+  }
+}
+
+# Count number of genes in each module/submodule
+count = numeric()
+modList = character()
+
+for (mod in unique(moduleColors)) {
+  path = file.path("D:/Desktop/WGCNA_V04/ExportSub", mod, paste0("CytoscapeInput-edges-", mod, ".txt"))
+  
+  if (file.exists(path)) {
+    x = read.delim(path)
+    dt = unique(c(as.character(x$fromNode), as.character(x$toNode)))  # Fix applied
+    count = c(count, length(dt))
+    modList = c(modList, mod)
+  } else {
+    print(paste("File not found:", path))
+  }
+}
+
+# Save summary report
+summary = data.frame(Module = modList, Gene_Count = count)
+write.table(summary, file = "Gene_Count_Summary.txt", row.names = FALSE, quote = FALSE)
+
+# Display summary
+print(summary)
