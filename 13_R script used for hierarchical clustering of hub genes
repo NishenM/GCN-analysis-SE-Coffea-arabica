@@ -1,0 +1,33 @@
+# R script used for hierarchical clustering of hub genes
+# Script for hierarchical clustering of hub genes
+
+setwd("E:\\WGCNA_V04")
+
+# Load necessary libraries
+library(dplyr)
+
+# Read hub genes
+hub_genes <- read.table("Hub genes.txt", header = FALSE, stringsAsFactors = FALSE)
+hub_gene_ids <- hub_genes$V2
+
+# Read expression matrix
+expression_data <- read.csv("filtered_coffee_SE_data.csv")
+
+# Filter rows for hub genes
+filtered_data <- expression_data %>% filter(ID %in% hub_gene_ids)
+
+# Calculate average expression across all samples
+filtered_data$Average_Expression <- rowMeans(filtered_data[, -1])
+
+# Perform hierarchical clustering
+dist_matrix <- dist(filtered_data$Average_Expression)
+hc <- hclust(dist_matrix, method = "average") 
+
+# Save the dendrogram to a PDF file with distances shown
+pdf("E:\\WGCNA_V04\\Plots\\12_Hub_genes_dendrogram.pdf", width = 8, height = 8)
+
+# Plot the dendrogram with distances
+plot(hc, labels = filtered_data$ID, main = "Dendrogram of Hub Genes with Distances", xlab = "", sub = "")
+
+# Close the PDF file
+dev.off()
