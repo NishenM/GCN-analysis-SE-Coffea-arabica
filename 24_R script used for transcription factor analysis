@@ -1,0 +1,177 @@
+# R script used for transcription factor analysis
+
+1.	
+# Script for mapping modules to developmental stages
+
+# Set working directory
+setwd("E:\\TF")
+
+# Load data
+load(file = "dataInput.RData")
+load(file = "networkConstruction.RData")
+
+# Create a named vector mapping genes to module colors
+geneModuleMapping <- setNames(moduleColors, names(moduleLabels))
+
+# Define the mapping of modules to stages
+module_stage_mapping <- list(
+  "black" = "L1",
+  "turquoise" = "L1",
+  "yellow" = "D1",
+  "pink" = "C1",
+  "magenta" = "R1",
+  "purple" = "R4",
+  "green" = "E1"
+)
+
+# Assign stages to modules
+geneStageMapping <- data.frame(
+  Gene = names(geneModuleMapping),
+  Module = geneModuleMapping
+)
+
+# Map stages using module_stage_mapping, and assign "Unassigned" where there is no match
+geneStageMapping$Stage <- sapply(geneStageMapping$Module, function(module) {
+  if (module %in% names(module_stage_mapping)) {
+    return(module_stage_mapping[[module]])
+  } else {
+    return("Unassigned")
+  }
+})
+
+# Remove rows with "Unassigned" stages
+geneStageMapping <- geneStageMapping[geneStageMapping$Stage != "Unassigned", ]
+
+# Save to CSV
+write.csv(geneStageMapping, file = "Gene_Stage_Mapping.csv", row.names = FALSE)
+
+
+
+
+
+2.
+# Script for visualizing the distribution of TF families in the Network
+
+setwd("E:\\TF")
+
+library(ggplot2)
+library(dplyr)
+
+# Read the transcription factor list
+tf_list <- read.delim("C_arabica_TF_list.txt", header = TRUE, sep = "\t")
+
+# Read all genes in the network
+all_genes <- read.delim("ModuleGenes.txt", header = FALSE, col.names = c("Gene_ID"))
+
+# Filter TF list to keep only genes present in the network
+network_tf_list <- tf_list %>% filter(Gene_ID %in% all_genes$Gene_ID)
+
+# Count occurrences of each TF family among all genes in the network
+network_family_counts <- network_tf_list %>%
+  group_by(Family) %>%
+  summarise(Network_Count = n())
+
+# Calculate the percentage of genes in each TF family based on the total TF count in the network
+total_network_TFs <- sum(network_family_counts$Network_Count)
+network_family_counts$Percentage <- (network_family_counts$Network_Count / total_network_TFs) * 100
+
+# Convert Family to a factor with alphabetical order
+network_family_counts$Family <- factor(network_family_counts$Family, levels = sort(unique(network_family_counts$Family)))
+
+# Open a PDF file for saving the plot
+pdf("All_Genes_TF_Distribution.pdf", width = 10, height = 6)
+
+# Generate a custom color palette with the number of colors equal to the number of families
+n_colors <- length(unique(network_family_counts$Family))
+custom_palette <- colorRampPalette(RColorBrewer::brewer.pal(9, "Set1"))(n_colors)
+
+# Plot the data with the custom color palette
+ggplot(network_family_counts, aes(x = Family, y = Percentage, fill = Family)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  labs(y = "Gene Percentage (%)", 
+       title = "Distribution of Genes in TF Families", 
+       fill = "Transcription factor family") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1,vjust = 0.5, size = 7),
+    axis.title.y = element_text(size = 9),
+    legend.position = "bottom",  # Move legend to the bottom
+    legend.key.size = unit(0.3, "cm"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.2),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.ticks = element_line(linewidth = 0.2),
+    plot.margin = margin(20, 40, 20, 40),
+    axis.title.x = element_blank(),
+    legend.text = element_text(size = 7, margin = margin(r = 8, l = 2, unit = "pt")), 
+    legend.title = element_text(size = 8) 
+  ) +  
+  guides(
+    fill = guide_legend(title.position = "top", ncol = 11)
+  ) +  
+  scale_fill_manual(values = custom_palette)
+
+# Close the file device
+dev.off()
+
+3.
+# Script for visualizing TF family distribution 
+library(ggplot2)
+library(dplyr)
+
+# Load transcription factor list
+tf_list <- read.delim("C_arabica_TF_list.txt", header = TRUE, sep = "\t")
+
+# Load gene-stage mapping
+gene_stage_mapping <- read.delim("Gene_Stage_Mapping.csv", header = TRUE, sep = ",")
+
+# Merge TF list with stage mapping
+tf_stage_data <- merge(tf_list, gene_stage_mapping, by.x = "Gene_ID", by.y = "Gene")
+
+# Count occurrences of each TF family per stage
+tf_counts <- tf_stage_data %>%
+  group_by(Stage, Family) %>%
+  summarise(Count = n(), .groups = 'drop')
+
+# Calculate the total number of TFs in the entire network
+total_tf_network <- nrow(tf_stage_data)
+
+# Compute the percentage relative to total TFs in network
+tf_counts$Percentage <- (tf_counts$Count / total_tf_network) * 100
+
+# Define a custom color palette
+n_colors <- length(unique(tf_counts$Family))
+custom_palette <- colorRampPalette(RColorBrewer::brewer.pal(9, "Set1"))(n_colors)
+
+# Define the order of stages
+stage_order <- c("L1", "D1", "C1", "R1", "R4", "E1")
+tf_counts$Stage <- factor(tf_counts$Stage, levels = stage_order)
+
+pdf("TF_Family_Distribution_by_Stage.pdf", width = 14, height = 14)
+ggplot(tf_counts, aes(x = Family, y = Percentage, fill = Family)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  labs(y = "Gene Percentage (%)", 
+       title = "TF Family Distribution Across Stages", 
+       fill = "Transcription factor family") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
+    axis.title.y = element_text(size = 10),
+    legend.position = "bottom",
+    legend.key.size = unit(0.3, "cm"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.2),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.ticks = element_line(linewidth = 0.2),
+    plot.margin = margin(20, 40, 20, 40),
+    axis.title.x = element_text(size = 9),
+    legend.text = element_text(size = 9, margin = margin(r = 20, l = 3, unit = "pt")),
+    legend.title = element_text(size = 10),
+    strip.text = element_text(size = 10)
+  ) +  
+  guides(
+    fill = guide_legend(title.position = "top", ncol = 10)
+  ) +  
+  scale_fill_manual(values = custom_palette) +
+  facet_wrap(~ Stage, ncol = 2, scales = "free_x") +
+  theme(strip.background = element_rect(fill = "grey90"))
+
+dev.off()
