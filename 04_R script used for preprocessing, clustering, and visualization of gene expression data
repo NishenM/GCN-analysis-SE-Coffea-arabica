@@ -1,0 +1,99 @@
+# R script used for preprocessing, clustering, and visualization of gene expression data
+# Script for data preprocessing and visualization
+
+setwd("D:\\Desktop\\WGCNA_V04")
+
+library(WGCNA)
+library(ggplot2)
+library(ape)
+library(RColorBrewer)
+library(grDevices)
+
+options(stringsAsFactors = FALSE)
+
+# Reading data
+exp = read.csv('filtered_coffee_SE_data.csv', header = TRUE, row.names = 1) 
+
+# Preprocessing
+data = t(exp)
+data = as.data.frame(data)
+rm(exp)
+
+# QC - checking for missing values
+gsg = goodSamplesGenes(data, verbose = 2)
+summary(gsg)
+gsg$allOK
+
+# Cluster samples - method 1
+sampleTree = hclust(dist(data), method = "average")
+
+# Open a PDF to save the dendrogram and PCA together
+pdf(file = "Plots/01_sampleClustering.pdf", width = 12, height = 9)
+
+# Plot the sample tree as a dendrogram
+par(cex = 0.6)
+par(mar = c(0, 4, 2, 0))
+plot(sampleTree, main = "Sample clustering to detect outliers in Somatic Embryogenesis",
+     sub = "", xlab = "", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+dev.off()
+
+# Define labels for the replicates
+label <- c("L1_r1", "L1_r2", "L1_r3",
+           "D1_r1", "D1_r2", "D1_r3",
+           "D2_r1", "D2_r2", "D2_r3", 
+           "D3_r1", "D3_r2", "D3_r3",
+           "C1_r1", "C1_r2", "C1_r3",
+           "C2_r1", "C2_r2", "C2_r3",
+           "C3_r1", "C3_r2", "C3_r3",
+           "R1_r1", "R1_r2", "R1_r3",
+           "R2_r1", "R2_r2", "R2_r3",
+           "R3_r1", "R3_r2", "R3_r3",
+           "R4_r1", "R4_r2", "R4_r3",
+           "E1_r1", "E1_r2", "E1_r3")
+
+# Define main groupings for the samples
+main <- c(rep("L1", 3),
+          rep("D1", 3),
+          rep("D2", 3),
+          rep("D3", 3),
+          rep("C1", 3),
+          rep("C2", 3),
+          rep("C3", 3),
+          rep("R1", 3),
+          rep("R2", 3),
+          rep("R3", 3),
+          rep("R4", 3),
+          rep("E1", 3))
+
+# Generate the distance matrix
+dt <- as.matrix(dist(data, method = 'euclidean'))
+row.names(dt) <- label
+colnames(dt) <- label
+
+# Generate the heatmap with labels and groupings
+pdf(file = "Plots/02_sampleClustering_heatmap.pdf", width = 30, height = 20)
+par(cex = 1.6)
+par(mar = c(1, 4, 4, 1))
+
+# Define colors for the heatmap and row-side colors
+colMain <- colorRampPalette(brewer.pal(8, "BrBG"))(30)  # Heatmap color gradient
+unique_groups <- unique(main)  # Get unique groups
+my_group <- factor(main, levels = unique_groups)  # Ensure consistent group ordering
+colSide <- brewer.pal(length(unique_groups), "Set3")[as.numeric(my_group)]  # Row-side color palette
+
+# Create the heatmap
+heatmap(dt, col = colMain, RowSideColors = colSide, margins = c(8, 2), cexRow = 1.2, cexCol = 1.2)
+
+# Add legends
+legend("topleft", legend = c("Minimum", "Average", "Maximum"), 
+       fill = colorRampPalette(brewer.pal(8, "BrBG"))(3), 
+       title = "Heatmap Scale", cex = 1.5, bty = "n")  # Heatmap scale legend
+
+legend("topright", legend = unique_groups, 
+       fill = brewer.pal(length(unique_groups), "Set3"), 
+       title = "Stages", cex = 1.5, bty = "n")  # Row-side color legend
+
+dev.off()
+# Collect garbage
+gc()
+save(data, file = "dataInput.RData")
