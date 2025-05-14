@@ -1,0 +1,196 @@
+# R script used for functional enrichment analysis and visualization of stage-specific modules
+# Script for generating bubble plots of enriched GO terms
+
+setwd("E:\\GO")
+
+# Load necessary libraries
+library(ggplot2)
+library(stringr)
+library(dplyr)
+library(grid)
+
+# Define module names (22 modules)
+module_names <- c("green", "yellow", "black", "turquoise", "magenta", "pink", "purple")
+
+# Define custom facet labels (excluding CC)
+custom_labels <- c("GOTERM_BP_DIRECT" = "Biological Process (BP)", 
+                   "GOTERM_MF_DIRECT" = "Molecular Function (MF)")
+
+# Define total values for each module
+total_values <- list(
+  "black" = 998, "turquoise" = 5156, 
+  "green" = 1350, "magenta" = 368, 
+  "pink" = 878, "purple" = 350, 
+  "yellow" = 1887
+)
+
+# Open a single PDF file for stage specific modules
+pdf("GO_visualizations_stage_specific_modules.pdf", width = 16, height = 10, onefile = TRUE)
+
+# Initialize empty lists to store p-adjust and Count values for global scaling
+p_adj_values <- numeric(0)
+count_values <- numeric(0)
+
+# Process each module
+for (module in module_names) {
+  # Define file path for each module
+  module_file <- file.path("E:/GO/Mod", module, paste0("GOTERM_combined_", module, ".txt"))
+  
+  # Check if the file exists and is not empty
+  if (file.exists(module_file) && file.info(module_file)$size > 0) {
+    
+    # Load the module data safely
+    go_data <- tryCatch({
+      read.table(module_file, sep = "\t", header = TRUE, stringsAsFactors = FALSE, quote = "")
+    }, error = function(e) {
+      message("Skipping module: ", module, " - Error reading file: ", e$message)
+      return(NULL)
+    })
+    
+    if (is.null(go_data)) next  # Skip if file reading failed
+    
+    # Ensure necessary columns exist
+    required_columns <- c("Term", "PValue", "Count", "List.Total", "Category")
+    if (!all(required_columns %in% colnames(go_data))) {
+      message("Skipping module: ", module, " - Missing required columns.")
+      next
+    }
+    
+    # Remove "GO:XXXXX~" prefix from Term column
+    go_data$Term <- sub("GO:\\d+~", "", go_data$Term)
+    
+    # List of exceptions
+    exceptions <- c("DNA", "RNA", "mRNA", "tRNA")
+    
+    # Capitalize the first letter of each term except the exceptions
+    go_data$Term <- sapply(go_data$Term, function(term) {
+      # Split the term into words
+      words <- strsplit(term, " ")[[1]]
+      
+      # Check if the first word is in the exceptions
+      if (words[1] %in% exceptions) {
+        return(term) # Keep the term unchanged if the first word is an exception
+      }
+      
+      # Capitalize the first letter of the first word
+      words[1] <- paste0(toupper(substr(words[1], 1, 1)), substr(words[1], 2, nchar(words[1])))
+      
+      # Combine the words back together
+      return(paste(words, collapse = " "))
+    })
+        
+    # Use the total values specified for each module
+    go_data$List.Total <- total_values[[module]]
+    
+    # Calculate Gene Ratio as Count / List.Total
+    go_data$GeneRatio <- go_data$Count / go_data$List.Total
+    
+    # Calculate adjusted p-values
+    go_data$p_adj <- p.adjust(go_data$PValue, method = "BH")
+    
+    # Filter data: Select terms with p-value < 0.05
+    filtered_data <- subset(go_data, PValue < 0.05 & Category %in% c("GOTERM_BP_DIRECT", "GOTERM_MF_DIRECT"))
+    
+    # If no data remains after filtering, skip this module
+    if (nrow(filtered_data) == 0) next
+    
+    # Select the top 10 terms per category based on lowest PValue
+    filtered_data <- filtered_data %>% 
+      group_by(Category) %>% 
+      arrange(PValue) %>% 
+      slice_head(n = 10) %>% 
+      ungroup()
+    
+    # Store p-adjust and Count values for global scaling
+    p_adj_values <- c(p_adj_values, filtered_data$p_adj)
+    count_values <- c(count_values, filtered_data$Count)
+    
+    # Convert Term into a factor to maintain order
+    filtered_data$Term <- factor(filtered_data$Term, levels = rev(unique(filtered_data$Term)))
+    
+    # Rename categories for better readability
+    filtered_data$Category <- factor(filtered_data$Category, 
+                                     levels = c("GOTERM_BP_DIRECT", "GOTERM_MF_DIRECT"))
+    
+    # Capitalize the first letter of the module name
+    module_title <- str_to_title(module)
+    
+    # Add module title as a blank page
+    grid.newpage()
+    grid.text(paste("Module:", module_title), gp = gpar(fontsize = 20, fontface = "bold"))
+    
+    # Handle merged data for turquoise and black modules
+    if (module %in% c("black", "turquoise")) {
+      if (!exists("merged_data")) {
+        merged_data <- filtered_data
+      } else {
+        merged_data <- bind_rows(merged_data, filtered_data)
+      }
+      next
+    }
+    
+    # Define the plot
+    print(ggplot(filtered_data, aes(x = GeneRatio, y = Term, size = Count, color = p_adj)) +
+            geom_point(alpha = 0.7) +
+            facet_wrap(~ Category, scales = "free_y", ncol = 1, labeller = labeller(Category = custom_labels)) +  
+            labs(x = "Gene Ratio", y = "GO Terms", size = "Count", color = "p-adjust value", 
+                 title = paste("Module:", module_title)) +
+            theme_minimal() +
+            scale_color_gradient(low = "blue", high = "red", limits = c(min(p_adj_values), max(p_adj_values))) +
+            theme(
+              axis.text = element_text(size = 12),
+              axis.title = element_text(size = 12),
+              legend.position = "right",
+              strip.text = element_text(size = 11, face = "plain", color = "black"),
+              strip.background = element_rect(fill = "grey", color = "grey"), 
+              panel.border = element_rect(color = "grey", fill = NA, linewidth = 0.2),
+              axis.ticks.length = unit(0.15, "cm"),
+              axis.ticks = element_line(linewidth = 0.2),
+              axis.text.x = element_text(margin = margin(t = 6)),
+              axis.text.y = element_text(margin = margin(r = 6)),
+              plot.margin = margin(20, 40, 20, 40),
+              legend.key.height = unit(2, "cm") 
+            )
+    )
+  } else {
+    message("Skipping module: ", module, " - File not found or empty.")
+  }
+}
+
+# After merging data for turquoise and black
+if (exists("merged_data")) {
+  # Select top 10 BP and top 10 MF GO terms
+  merged_data <- merged_data %>%
+    filter(Category == "GOTERM_BP_DIRECT" | Category == "GOTERM_MF_DIRECT") %>%
+    group_by(Category) %>%
+    arrange(PValue) %>%
+    slice_head(n = 10) %>%
+    ungroup()
+  
+  # Define the plot for merged data
+  print(ggplot(merged_data, aes(x = GeneRatio, y = Term, size = Count, color = p_adj)) +
+          geom_point(alpha = 0.7) +
+          facet_wrap(~ Category, scales = "free_y", ncol = 1, labeller = labeller(Category = custom_labels)) +  
+          labs(x = "Gene Ratio", y = "GO Terms", size = "Count", color = "p-adjust value", 
+               title = "Merged Module (Black + Turquoise)") +
+          theme_minimal() +
+          scale_color_gradient(low = "blue", high = "red", limits = c(min(p_adj_values), max(p_adj_values))) +
+          theme(
+            axis.text = element_text(size = 12),
+            axis.title = element_text(size = 12),
+            legend.position = "right",
+            strip.text = element_text(size = 11, face = "plain", color = "black"),
+            strip.background = element_rect(fill = "grey", color = "grey"), 
+            panel.border = element_rect(color = "grey", fill = NA, linewidth = 0.2),
+            axis.ticks.length = unit(0.15, "cm"),
+            axis.ticks = element_line(linewidth = 0.2),
+            axis.text.x = element_text(margin = margin(t = 6)),
+            axis.text.y = element_text(margin = margin(r = 6)),
+            plot.margin = margin(20, 40, 20, 40),
+            legend.key.height = unit(2, "cm")
+          )
+  )
+}
+
+# Close the PDF device
+dev.off()
