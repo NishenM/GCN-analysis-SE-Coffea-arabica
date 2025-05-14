@@ -1,0 +1,145 @@
+# R script used for K-means clustering of hub gene expression profiles
+# Script for performing K-means clustering on hub gene expression profiles and visualization
+
+setwd("E:\\WGCNA_V04")
+
+library(ggplot2)
+library(reshape2)
+library(factoextra)
+
+# Load expression data
+expr_data <- read.csv("filtered_coffee_SE_data.csv", stringsAsFactors = FALSE)
+
+# Load hub genes
+hub_genes <- unique(scan("All_hub_genes.txt", what = character(), quiet = TRUE))
+
+# Ensure "ID" column exists
+if (!"ID" %in% colnames(expr_data)) {
+  stop("Error: 'ID' column not found in the dataset.")
+}
+
+# Set row names and remove "ID" column
+rownames(expr_data) <- expr_data$ID  
+expr_data <- expr_data[, -which(names(expr_data) == "ID")]
+
+# Convert data to numeric
+expr_data <- as.data.frame(lapply(expr_data, as.numeric), row.names = rownames(expr_data))
+
+# Filter hub genes
+expr_hub_genes <- expr_data[rownames(expr_data) %in% hub_genes, , drop = FALSE]
+
+# Save the filtered hub gene expression data
+# write.csv(expr_hub_genes, "E:\\Hub\\Expression\\hub_gene_expression_data.csv", row.names = TRUE)
+
+# Elbow Method to determine the optimal number of clusters
+wss <- numeric(10)
+for (k in 1:10) {
+  wss[k] <- sum(kmeans(expr_hub_genes, centers = k, nstart = 25)$withinss)
+}
+
+# Open PDF device to save plots
+pdf("E:\\Hub\\Expression\\Elbow_Plot.pdf", width = 8, height = 6)
+
+# Create the elbow plot using factoextra
+plot1 <- fviz_nbclust(expr_hub_genes, kmeans, method = "wss") +
+  geom_vline(xintercept = 5, linetype = "dashed", color = "red") +
+  theme_minimal() +
+  theme(
+    panel.border = element_rect(color = "grey", fill = NA, linewidth = 0.2),  
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.ticks = element_line(linewidth = 0.2),
+    axis.title = element_text(size = 10),
+    axis.text.x = element_text(margin = margin(t = 6)),
+    axis.text.y = element_text(margin = margin(r = 6))
+  )
+
+# Print the plot to the PDF
+print(plot1)
+
+# Close the PDF device
+dev.off()
+
+# K-means clustering 
+set.seed(123)
+k <- 5
+clusters <- kmeans(expr_hub_genes, centers = k, nstart = 25)
+
+# Add cluster labels
+expr_hub_genes$Cluster <- as.factor(clusters$cluster)
+
+# Compute average expression per cluster for each stage
+expr_hub_genes$Gene <- rownames(expr_hub_genes)
+
+# Convert to long format for visualization
+expr_long <- melt(expr_hub_genes, id.vars = c("Gene", "Cluster"), 
+                  variable.name = "Sample", value.name = "Expression")
+
+# Extract stage names from sample names (removing replicate info)
+expr_long$Stage <- gsub("_[rR][1-3]$", "", expr_long$Sample)  
+expr_long$Stage <- paste("Stage", expr_long$Stage)  
+
+# Compute **mean expression for each cluster at each stage**
+expr_cluster_mean <- aggregate(Expression ~ Cluster + Stage, data = expr_long, mean)
+
+# Ensure consistent x-axis order
+expr_cluster_mean$Stage <- factor(expr_cluster_mean$Stage, levels = unique(expr_cluster_mean$Stage))
+
+# Calculate the percentage of genes in each cluster
+total_genes <- nrow(expr_hub_genes)
+cluster_counts <- table(expr_hub_genes$Cluster)
+cluster_percentages <- round((cluster_counts / total_genes) * 100, 2)
+
+# Find min and max y-axis values for consistency
+y_min <- min(expr_cluster_mean$Expression)
+y_max <- max(expr_cluster_mean$Expression)
+
+# Save Cluster Plots in a separate PDF
+pdf("E:\\Hub\\Expression\\Cluster_Average_Expression.pdf", width = 10, height = 6)
+# Generate separate plots for each cluster
+for (cl in levels(expr_cluster_mean$Cluster)) {
+  
+  # Subset data for the specific cluster
+  cluster_data <- subset(expr_cluster_mean, Cluster == cl)
+  
+  # Get the percentage of genes in this cluster
+  gene_percentage <- cluster_percentages[as.character(cl)]
+  
+  # Plot **average expression per cluster** across stages
+  p <- ggplot(cluster_data, aes(x = Stage, y = Expression, group = Cluster, color = Cluster)) +
+    geom_line(color = "black", linewidth = 0.8) +
+    theme_minimal() +
+    labs(title = paste("Cluster", cl, "- Avg. Expression (", gene_percentage, "% of Genes)", sep=" "),
+         x = "Stages", y = "Average Expression Level") +
+    theme(
+      panel.border = element_rect(color = "grey", fill = NA, linewidth = 0.2),  
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.ticks = element_line(linewidth = 0.2),
+      axis.title = element_text(size = 10),
+      axis.text = element_text(size = 9),
+      axis.text.x = element_text(margin = margin(t = 6), hjust = 0.5),
+      axis.text.y = element_text(margin = margin(r = 6))
+    ) +
+    ylim(y_min, y_max)
+  
+  print(p)
+}
+
+# Create a combined plot with all clusters
+p_all <- ggplot(expr_cluster_mean, aes(x = Stage, y = Expression, group = Cluster, color = Cluster)) +
+  geom_line(linewidth = 0.8) +
+  theme_minimal() +
+  labs(title = "All Clusters - Avg. Expression Across Stages",
+       x = "Stages", y = "Average Expression Level") +
+  theme(
+    panel.border = element_rect(color = "grey", fill = NA, linewidth = 0.2),  
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.ticks = element_line(linewidth = 0.2),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 9),
+    axis.text.x = element_text(margin = margin(t = 6), hjust = 0.5),
+    axis.text.y = element_text(margin = margin(r = 6))
+  ) +
+  ylim(y_min, y_max)
+
+print(p_all)
+dev.off()
