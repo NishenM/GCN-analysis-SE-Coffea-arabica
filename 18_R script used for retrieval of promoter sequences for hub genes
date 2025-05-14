@@ -1,0 +1,48 @@
+# R script used for retrieval of promoter sequences for hub genes
+# Script for retrieving the promoter sequences of hub genes
+
+setwd("E:\\MEME")
+
+library(Biostrings)
+library(readr)
+
+# Read gene information from CSV
+gene_info <- read_csv("gene_information.csv", show_col_types = FALSE)
+
+# Read genome sequences from FASTA file
+genome_sequences <- readDNAStringSet("genome_sequence.fasta")
+
+# Function to extract 1000 bp upstream of each gene
+extract_upstream_sequence <- function(gene_info, genome_sequences) {
+  upstream_sequences <- list()
+  for (i in 1:nrow(gene_info)) {
+    gene_name <- gene_info$gene_name[i]
+    chromosome <- gene_info$chromosome[i]
+    start <- gene_info$start[i]
+    end <- gene_info$end[i]
+    strand <- gene_info$strand[i]
+    
+    # Get the sequence for the specific chromosome
+    seq <- genome_sequences[[chromosome]]
+    if (strand == "forward") {
+      # Extract 1000 bp upstream on the forward strand (before the start)
+      upstream_start <- max(1, start - 1000)
+      upstream_seq <- subseq(seq, upstream_start, start - 1)
+    } else if (strand == "complement") {
+      # Extract 1000 bp upstream on the complement strand (before the end)
+      upstream_end <- max(1, end - 1000)
+      upstream_seq <- subseq(seq, upstream_end, end - 1)
+      upstream_seq <- reverseComplement(upstream_seq)
+    }
+    # Store the sequence in the list with gene name as header
+    upstream_sequences[[gene_name]] <- upstream_seq
+  }
+  
+  return(upstream_sequences)
+}
+
+# Extract upstream sequences
+upstream_sequences <- extract_upstream_sequence(gene_info, genome_sequences)
+upstream_DNAStringSet <- DNAStringSet(upstream_sequences)
+# Save the results to a FASTA file
+writeXStringSet(upstream_DNAStringSet, "upstream_sequences.fasta")
