@@ -1,0 +1,215 @@
+# R script used for identification of SE marker genes across the network modules
+
+1.	
+# Script for fetching protein sequences
+
+setwd("E:\\EMB\\SE")
+
+library(rentrez)
+
+# Load gene IDs from the file
+gene_ids <- readLines("SE_list.txt")
+
+# Function to retrieve protein sequences from NCBI
+get_protein_sequence <- function(gene_id) {
+  search_result <- entrez_search(db = "protein", term = paste(gene_id, "[Gene ID]"))
+  if (length(search_result$ids) > 0) {
+    protein_id <- search_result$ids[1]
+    seq_data <- entrez_fetch(db = "protein", id = protein_id, rettype = "fasta", retmode = "text")
+    return(seq_data)
+  } else {
+    return(NULL)
+  }
+}
+
+# Open the FASTA file to save sequences
+fasta_file <- file("Protein_Seq.fasta", "w")
+
+# Iterate over gene IDs and fetch protein sequences, then save to FASTA file
+for (gene_id in gene_ids) {
+  seq_data <- get_protein_sequence(gene_id)
+  if (!is.null(seq_data)) {
+    cat(seq_data, file = fasta_file, append = TRUE)
+  } else {
+    cat("No sequence found for gene ID:", gene_id, "\n")
+  }
+}
+
+# Close the file after saving
+close(fasta_file)
+
+cat("Protein sequences have been saved to Protein_Seq.fasta.\n")
+
+2.
+# Script for filtering and extracting unique protein accessions from blastp results
+
+setwd("E:\\EMB\\SE")
+
+library(dplyr)
+
+# Read the BLAST output file
+blast_data <- read.table("ProInfo.txt", header = FALSE, sep = "\t", comment.char = "#", stringsAsFactors = FALSE)
+
+# Assign column names based on the BLAST output fields
+colnames(blast_data) <- c("Query", "Accession", "Identity", "Alignment_Length", "Mismatches", 
+                          "Gap_Opens", "Q_Start", "Q_End", "S_Start", "S_End", "Evalue", "Bit_Score", "Positives")
+
+# Function to get the first accession starting with "XP"
+get_first_XP <- function(query_hits) {
+  xp_hits <- query_hits %>% filter(startsWith(Accession, "XP_"))
+  if (nrow(xp_hits) > 0) {
+    return(xp_hits$Accession[1])
+  } else {
+    return(NA)  # or query_hits$Accession[1] if you want a fallback
+  }
+}
+
+# Apply the function to each query
+unique_hits <- blast_data %>%
+  group_by(Query) %>%
+  summarise(Selected_Accession = get_first_XP(pick(everything())), .groups = 'drop')
+
+# Save the selected accessions for each query to a file
+write.table(unique_hits, "selected_accessions.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+# Save only the accessions to a separate file
+write.table(unique(unique_hits$Selected_Accession), "accessions_only.txt", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+3.
+# Script for fetching gene ids
+
+library(rentrez)
+
+# Read protein accession numbers from the file
+protein_accessions <- readLines("accessions_only.txt")
+
+# Function to get gene ID from protein accession
+get_gene_id <- function(accession) {
+  # Search for the protein in the NCBI database
+  search_result <- entrez_search(db = "protein", term = accession)
+  
+  # If results found, fetch the corresponding record
+  if (search_result$count > 0) {
+    # Fetch the details of the first hit (protein record)
+    protein_record <- entrez_fetch(db = "protein", id = search_result$ids[1], rettype = "gb", retmode = "text")
+    
+    # Extract gene ID from the protein record (assuming it's available in the record)
+    gene_id <- sub("GeneID:(\\d+)", "\\1", regmatches(protein_record, gregexpr("GeneID:(\\d+)", protein_record))[[1]][1])
+    
+    return(gene_id)
+  } else {
+    return(NA)  # Return NA if no results are found
+  }
+}
+
+# Retrieve gene IDs for each protein accession
+gene_ids <- sapply(protein_accessions, get_gene_id)
+
+# Print gene IDs
+print(gene_ids)
+
+# Save the results to a file
+write.table(data.frame(Accession = protein_accessions, GeneID = gene_ids), "gene_ids_output.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# Save gene IDs only to a separate file
+write.table(unique(gene_ids), "gene_ids_only.txt", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+4.
+# Converting the geneInfo.txt file to CSV format
+
+# Read the GeneInfo.txt file into a data frame
+gene_data <- read.table("GeneInfo.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# Write the data to a CSV file
+write.csv(gene_data, "GeneInfo.csv", row.names = FALSE)
+
+5.
+# Script for identifying network modules for each marker
+
+setwd("E:\\EMB\\SE")
+
+rm(list = ls(all.names = TRUE))
+options(stringsAsFactors = F)
+
+# Load data
+load(file = "dataInput.RData")
+load(file = "networkConstruction.RData")
+
+# Define probes based on the loaded data
+probes = names(data)
+
+# Checking modules for SE markers
+SE_markers = read.csv('GeneInfo.csv', header = T)
+mrk = SE_markers$Symbol
+mrk_module = moduleColors[match(mrk, probes)]
+SE_markers = cbind(SE_markers, mrk_module)
+write.csv(SE_markers, 'SE-marker-modules.csv', row.names = F)
+
+6.
+# Script for assessing the connectivity of markers within modules
+
+library(dplyr)
+
+# Extract relevant columns for gene and module
+gene_module_data <- SE_markers[, c("Symbol", "mrk_module")]
+
+# Initialize an empty vector to store the number of interactions for each gene
+num_interactions_list <- numeric(length = nrow(SE_markers))
+
+# Iterate over each gene in the SE_markers data frame
+for (i in 1:nrow(SE_markers)) {
+  gene_of_interest <- SE_markers$Symbol[i]
+  module_of_interest <- SE_markers$mrk_module[i]
+  
+  # Skip iteration if module is NA
+  if (is.na(module_of_interest)) {
+    num_interactions_list[i] <- NA
+    next
+  }
+  
+  # Read the edge file for the module of interest
+  edge_file_path <- paste("E:\\WGCNA_V04\\Export\\CytoscapeInput-edges-", 
+                          module_of_interest, ".txt", sep="")
+  
+  # Check if the edge file exists before trying to read it
+  if (file.exists(edge_file_path)) {
+    edges <- read.delim(edge_file_path)
+    
+    # Count the number of interactions for the gene of interest
+    num_interactions <- sum(edges$fromNode == gene_of_interest | edges$toNode == gene_of_interest)
+    
+    # Store the result in the list
+    num_interactions_list[i] <- num_interactions
+  } else {
+    # If file doesn't exist, assign NA to the number of interactions
+    num_interactions_list[i] <- NA
+  }
+}
+
+# Add the number of interactions as a new column in the SE_markers data frame
+SE_markers$No_of_interactions <- num_interactions_list
+
+# Select and rename the required columns
+SE_markers_final <- SE_markers[, c("Symbol", "description", "mrk_module", "No_of_interactions")]
+
+# Rename the columns
+colnames(SE_markers_final) <- c("Gene identifier", "Gene name", "Module", "No. of interactors")
+
+# Capitalize the first letter of 'Module' and 'Gene name'
+SE_markers_final$`Module` <- toTitleCase(SE_markers_final$`Module`)
+SE_markers_final$`Gene name` <- toTitleCase(SE_markers_final$`Gene name`)
+
+# Remove rows where the number of interactions is NA (optional)
+SE_markers_final <- SE_markers_final %>% filter(!is.na(`No. of interactors`))
+
+# Order the data by number of interactions in descending order
+SE_markers_final <- SE_markers_final %>% arrange(desc(`No. of interactors`))
+
+# Reorder columns to match the desired order: Gene identifier, Module, Gene name, No. of interactors
+SE_markers_final <- SE_markers_final[, c("Gene identifier", "Module", "Gene name", "No. of interactors")]
+
+# View the updated SE_markers data frame
+head(SE_markers_final)
+
+# Optionally, save the updated data frame to a new CSV file
+write.csv(SE_markers_final, 'Distribution of SE markers across network modules ordered by the number of interactors.csv', row.names = FALSE)
