@@ -1,0 +1,241 @@
+# R script used for manual curation of normalized expression data and mapping of gene identifiers to gene symbols
+1.	
+# Script for gene filtering based on variance
+
+# Set the working directory
+setwd("E:\\WGCNA_V04\\Variance")
+
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+
+# Load the data
+exp <- read.csv('genes_fpkm_table.csv', header = TRUE, row.names = 1)
+
+# Calculate the variance of each gene
+gene_variances <- apply(exp, 1, var)
+
+# Determine the second quartile (median) of variance
+second_quartile <- quantile(gene_variances, 0.5)
+
+# Filter genes with variance greater than the second quartile
+filtered_genes <- exp[gene_variances > second_quartile, ]
+
+# Display the dimensions of the filtered dataset
+cat("Number of genes before filtering:", nrow(exp), "\n")
+cat("Number of genes after filtering:", nrow(filtered_genes), "\n")
+
+# Save the filtered dataset to a new CSV file
+write.csv(filtered_genes, "filtered_genes_fpkm_table.csv")
+
+2.	
+# Script for visualizing expression variance before and after filtering
+
+# Set the working directory
+setwd("E:\\WGCNA_V04\\Variance\\Before and after variance filtering")
+
+# Load required libraries
+library(ggplot2)
+
+# Load the datasets
+before_data <- read.csv("filtered_36_curated_genes_fpkm_table.csv", row.names = 1)
+after_data <- read.csv("36_curated_genes_fpkm_table.csv", row.names = 1)
+
+# Compute variance for each gene (row-wise variance)
+before_variance <- apply(before_data, 1, var, na.rm = TRUE)
+after_variance <- apply(after_data, 1, var, na.rm = TRUE)
+
+# Create data frame for visualization
+variance_df <- data.frame(
+  Variance = c(before_variance, after_variance),
+  Status = rep(c("Before Filtering", "After Filtering"), 
+               c(length(before_variance), length(after_variance)))
+)
+
+# Define the plot
+variance_plot <- ggplot(variance_df, aes(x = Variance, color = Status, fill = Status)) +
+  geom_density(alpha = 0.3) +
+  scale_x_log10() +  # Log scale for better visualization
+  theme_minimal() +
+  labs(title = "Density Plot of Variance Before and After Filtering",
+       x = "Variance (log scale)", y = "Density")
+
+# Save plot as PDF
+pdf("variance_distribution_plots.pdf", width = 8, height = 6)
+print(variance_plot)
+dev.off()
+
+# Save plot as JPG
+jpeg("variance_distribution_plots.jpg", width = 800, height = 600, res = 100)
+print(variance_plot)
+dev.off()
+
+3.	
+# Script for replacing tracking IDs with gene symbols.
+
+# Set working directory
+setwd("E:\\WGCNA_V03\\Data Set\\Final_dataset_36")
+
+# Load the required libraries
+library(dplyr)
+
+# Read the data files
+filtered_data <- read.csv("genes_fpkm_table.csv", stringsAsFactors = FALSE)
+genes_data <- read.table("genes.attr_table", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# Adjust the column names in the join if necessary
+merged_data <- filtered_data %>%
+  left_join(genes_data, by = c("ID" = "tracking_id")) 
+
+# Replace 'ID' with 'gene_short_name'
+merged_data$ID <- merged_data$gene_short_name
+
+# Drop 'gene_short_name' and any unwanted columns from the second table
+merged_data <- merged_data %>% select(-gene_short_name, -class_code, -nearest_ref_id, -gene_id, -tss_id, -locus, -length)
+
+# Save the final dataset to a CSV file
+write.csv(merged_data, "filtered_ genes_fpkm_table.csv", row.names = FALSE)
+
+4.
+# Script for computing gene lengths
+
+# Read the data from the ordered_gene_results.txt file
+gene_data_raw <- readLines("gene_result.txt")
+
+# Initialize vectors to store extracted information
+gene_names <- c()
+starts <- c()
+ends <- c()
+
+# Loop through the lines and extract relevant data
+for (line in gene_data_raw) {
+  # Extract gene name (e.g., LOC113716848)
+  if (grepl("^\\d+\\.\\s+LOC", line)) {  
+    gene_name <- gsub("^(\\d+\\.\\s+)(LOC\\d+).*", "\\2", line)
+    gene_names <- c(gene_names, gene_name)
+  }
+  
+  # Extract start and end positions, handle 'complement' as well
+  if (grepl("Annotation:", line)) {
+    # Adjusted to capture start and end positions, even with "complement"
+    annotation <- gsub(".*Annotation:.*\\((\\d+)\\.\\.(\\d+).*\\).*", "\\1,\\2", line)
+    start_end <- strsplit(annotation, ",")[[1]]
+    
+    # Check if start and end are valid numbers
+    start_value <- as.numeric(start_end[1])
+    end_value <- as.numeric(start_end[2])
+    
+    # Only add to vectors if the values are valid numbers
+    if (!is.na(start_value) && !is.na(end_value)) {
+      starts <- c(starts, start_value)
+      ends <- c(ends, end_value)
+    } else {
+      # If the values are not valid, add NA (or handle differently if needed)
+      starts <- c(starts, NA)
+      ends <- c(ends, NA)
+    }
+  }
+}
+
+# Check the lengths of the extracted vectors
+cat("Lengths of extracted vectors:\n")
+cat("Gene names: ", length(gene_names), "\n")
+cat("Start positions: ", length(starts), "\n")
+cat("End positions: ", length(ends), "\n")
+
+# If lengths match, create the data frame
+if(length(gene_names) == length(starts) && length(starts) == length(ends)) {
+  gene_data <- data.frame(
+    gene_name = gene_names,
+    start = starts,
+    end = ends
+  )
+  
+  # Calculate the length of each gene (end - start)
+  gene_data$length <- gene_data$end - gene_data$start
+  
+  # Write the data frame to a CSV file without chromosome and strand columns
+  write.csv(gene_data, "gene_information.csv", row.names = FALSE)
+  
+  # Print a message indicating the file has been created
+  cat("CSV file 'gene_information.csv' has been created.\n")
+} else {
+  cat("Error: The extracted data lengths do not match. Check the extraction process.\n")
+}
+
+5.
+# Script for selecting the gene ID with the longest sequence length when multiple gene IDs are assigned 
+
+library(dplyr)
+
+# Load data
+filtered_data <- read.csv("filtered_ genes_fpkm_table.csv", stringsAsFactors = FALSE)
+gene_info <- read.csv("gene_information.csv", stringsAsFactors = FALSE)
+
+# Convert gene information into a named vector for quick lookup
+gene_length_dict <- setNames(gene_info$length, gene_info$gene_name)
+
+get_max_length_gene_id <- function(cell) {
+  # Split multiple gene IDs (assuming they are comma-separated)
+  gene_ids <- unlist(strsplit(as.character(cell), ","))
+  
+  # If only one gene ID exists, return it as is
+  if (length(gene_ids) == 1) {
+    return(cell)
+  }
+  
+  # Filter valid gene IDs
+  valid_genes <- gene_ids[gene_ids %in% names(gene_length_dict)]
+  
+  # If no valid gene ID is found, return the original cell value
+  if (length(valid_genes) == 0) {
+    return(cell)
+  }
+  
+  # Get the gene ID with the maximum length
+  max_gene_id <- valid_genes[which.max(gene_length_dict[valid_genes])]
+  return(max_gene_id)
+}
+
+# Apply the function to the first column (assuming it's named 'Gene_ID')
+filtered_data[[1]] <- sapply(filtered_data[[1]], get_max_length_gene_id, simplify = TRUE)
+
+# Save the modified data
+write.csv(filtered_data, " filtered_coffee_SE_data.csv", row.names = FALSE)
+
+6.
+# Script for visualizing the distribution of gene expression data variance before and after filtering
+
+# Set the working directory
+setwd("E:\\WGCNA_V04\\Variance")
+
+# Load required libraries
+library(ggplot2)
+
+# Load the datasets
+before_data <- read.csv("filtered_36_curated_genes_fpkm_table.csv", row.names = 1)
+after_data <- read.csv("36_curated_genes_fpkm_table.csv", row.names = 1)
+
+# Compute variance for each gene (row-wise variance)
+before_variance <- apply(before_data, 1, var, na.rm = TRUE)
+after_variance <- apply(after_data, 1, var, na.rm = TRUE)
+
+# Create data frame for visualization
+variance_df <- data.frame(
+  Variance = c(before_variance, after_variance),
+  Status = rep(c("Before Filtering", "After Filtering"), 
+               c(length(before_variance), length(after_variance)))
+)
+
+# Define the plot
+variance_plot <- ggplot(variance_df, aes(x = Variance, color = Status, fill = Status)) +
+  geom_density(alpha = 0.3) +
+  scale_x_log10() +  # Log scale for better visualization
+  theme_minimal() +
+  labs(title = "Density Plot of Variance Before and After Filtering",
+       x = "Variance (log scale)", y = "Density")
+
+# Save plot as PDF
+pdf("variance_distribution_plots.pdf", width = 8, height = 6)
+print(variance_plot)
+dev.off()
