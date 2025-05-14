@@ -1,0 +1,91 @@
+# R script used for visualization of enriched GO terms of hub genes
+# Script for visualizing enriched GO terms of hub genes
+
+setwd("E:\\GO")
+
+library(ggplot2)
+library(stringr)
+library(dplyr)
+
+# Load the GO data
+file_path <- "GO.txt"
+go_data <- read.table(file_path, sep = "\t", header = TRUE)
+
+# Remove the "GO:XXXXX~" prefix from the Term column
+go_data$Term <- sub("GO:\\d+~", "", go_data$Term)
+
+# Capitalize the first letter of each term
+go_data$Term <- str_to_title(go_data$Term)
+
+# Calculate Gene Ratio as Count / List.Total
+go_data$GeneRatio <- go_data$Count / go_data$List.Total
+
+# Filter data: Select terms with p-value < 0.05
+filtered_data <- subset(go_data, PValue < 0.05)
+
+# Rename categories for better readability
+filtered_data$Category <- factor(filtered_data$Category, 
+                                 levels = c("GOTERM_BP_DIRECT", "GOTERM_MF_DIRECT", "GOTERM_CC_DIRECT"))
+
+# Convert Term into a factor to maintain order
+filtered_data$Term <- factor(filtered_data$Term, levels = rev(unique(filtered_data$Term)))
+
+# Define a consistent color palette for each category
+category_colors <- c("GOTERM_BP_DIRECT" = "#1b9e77", 
+                     "GOTERM_MF_DIRECT" = "#d95f02", 
+                     "GOTERM_CC_DIRECT" = "#7570b3")
+
+# Define custom facet labels
+custom_labels <- c("GOTERM_BP_DIRECT" = "Biological Process (BP)", 
+                   "GOTERM_MF_DIRECT" = "Molecular Function (MF)", 
+                   "GOTERM_CC_DIRECT" = "Cellular Component (CC)")
+
+# Save visualizations to a single PDF file
+pdf("GO_visualizations.pdf", width = 16, height = 10)
+
+# 1. Bar Plot (Faceted Horizontally with Boxed Labels)
+ggplot(filtered_data, aes(x = GeneRatio, y = Term, fill = Category)) +
+  geom_bar(stat = "identity", width = 0.9) +  
+  facet_grid(rows = vars(Category), scales = "free_y", space = "free_y", 
+             labeller = labeller(Category = custom_labels)) +  # Use custom labels
+  labs(x = "Gene Ratio", y = "GO Terms") +
+  theme_minimal() +
+  scale_fill_manual(values = category_colors) +
+  theme(
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    legend.position = "none",
+    strip.text = element_text(size = 10, face = "plain", color = "black"),
+    strip.background = element_rect(fill = "grey", color = "grey"), 
+    panel.border = element_rect(color = "grey", fill = NA, size = 0.2),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.ticks = element_line(size = 0.2),
+    axis.text.x = element_text(margin = margin(t = 6)),
+    axis.text.y = element_text(margin = margin(r = 6)),
+    plot.margin = margin(20, 40, 20, 40)
+  )
+
+# 2. Bubble Plot (Faceted Horizontally with Boxed Labels, Category Legend Removed)
+ggplot(filtered_data, aes(x = GeneRatio, y = Term, size = Count, color = Category)) +
+  geom_point(alpha = 0.7) +
+  facet_grid(rows = vars(Category), scales = "free_y", space = "free_y", 
+             labeller = labeller(Category = custom_labels)) +  # Use custom labels
+  labs(x = "Gene Ratio", y = "GO Terms", size = "Count") +
+  theme_minimal() +
+  scale_color_manual(values = category_colors, guide = "none") +
+  theme(
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    legend.position = "right",
+    strip.text = element_text(size = 10, face = "plain", color = "black"),
+    strip.background = element_rect(fill = "grey", color = "grey"), 
+    panel.border = element_rect(color = "grey", fill = NA, size = 0.2),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.ticks = element_line(size = 0.2),
+    axis.text.x = element_text(margin = margin(t = 6)),
+    axis.text.y = element_text(margin = margin(r = 6)),
+    plot.margin = margin(20, 40, 20, 40)
+  )
+
+# Close the PDF device
+dev.off()
