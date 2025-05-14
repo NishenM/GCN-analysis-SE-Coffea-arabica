@@ -1,0 +1,145 @@
+# R script used for retrieval of homologous Arabidopsis genes for identified hub genes
+1.	
+# Script for fetching protein sequences
+
+setwd("E:\\Hub\\EFP")
+
+library(rentrez)
+
+# Load gene IDs from the file
+gene_ids <- readLines("All_hub_genes_updated.txt")
+
+# Function to retrieve protein sequences from NCBI
+get_protein_sequence <- function(gene_id) {
+  search_result <- entrez_search(db = "protein", term = paste(gene_id, "[Gene ID]"))
+  if (length(search_result$ids) > 0) {
+    protein_id <- search_result$ids[1]
+    seq_data <- entrez_fetch(db = "protein", id = protein_id, rettype = "fasta", retmode = "text")
+    return(seq_data)
+  } else {
+    return(NULL)
+  }
+}
+
+# Open the FASTA file to save sequences
+fasta_file <- file("Protein_Seq_Hub.fasta", "w")
+
+# Iterate over gene IDs and fetch protein sequences, then save to FASTA file
+for (gene_id in gene_ids) {
+  seq_data <- get_protein_sequence(gene_id)
+  if (!is.null(seq_data)) {
+    cat(seq_data, file = fasta_file, append = TRUE)
+  } else {
+    cat("No sequence found for gene ID:", gene_id, "\n")
+  }
+}
+
+# Close the file after saving
+close(fasta_file)
+
+cat("Protein sequences have been saved to Protein_Seq.fasta.\n")
+
+2.
+# Script for filtering and extracting unique protein accessions from blastp results
+
+setwd("E:\\Hub\\EFP")
+
+library(dplyr)
+
+# Read the BLAST output file
+blast_data <- read.table("ProHits.txt", header = FALSE, sep = "\t", comment.char = "#", stringsAsFactors = FALSE)
+
+# Assign column names based on the BLAST output fields
+colnames(blast_data) <- c("Query", "Accession", "Identity", "Alignment_Length", "Mismatches", 
+                          "Gap_Opens", "Q_Start", "Q_End", "S_Start", "S_End", "Evalue", "Bit_Score", "Positives")
+
+# Function to get the first accession starting with "NP_"
+get_first_np_accession <- function(df) {
+  np_hits <- df$Accession[startsWith(df$Accession, "NP_")]
+  if (length(np_hits) > 0) {
+    return(np_hits[1])
+  } else {
+    return(df$Accession[1])  # fallback if no NP_ found
+  }
+}
+
+# Updated code using `pick(everything())` instead of `cur_data()`
+unique_hits <- blast_data %>%
+  group_by(Query) %>%
+  summarise(Selected_Accession = get_first_np_accession(pick(everything())), .groups = 'drop')
+
+# Save the selected accessions
+write.table(unique_hits, "selected_accessions.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+# Save just the accessions separately
+accessions <- unique(unique_hits$Selected_Accession)
+write.table(accessions, "accessions_only.txt", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+3.
+# Script for fetching gene ids
+
+library(rentrez)
+
+# Read protein accession numbers
+protein_accessions <- readLines("accessions_only.txt")
+
+# Function to fetch GeneID and TAIR ID from a protein accession
+get_gene_and_tair <- function(accession) {
+  # Search for the protein
+  search_result <- entrez_search(db = "protein", term = accession)
+  
+  if (search_result$count > 0) {
+    # Fetch the protein record in GenBank format
+    protein_record <- entrez_fetch(db = "protein", id = search_result$ids[1], rettype = "gb", retmode = "text")
+    
+    # Extract GeneID
+    gene_id_match <- regmatches(protein_record, gregexpr("GeneID:(\\d+)", protein_record))[[1]]
+    gene_id <- if (length(gene_id_match) > 0) sub("GeneID:(\\d+)", "\\1", gene_id_match[1]) else NA
+    
+    # Use GeneID to fetch gene record and extract TAIR ID
+    tair_id <- NA
+    if (!is.na(gene_id)) {
+      gene_summary <- entrez_summary(db = "gene", id = gene_id)
+      if (!is.null(gene_summary$otheraliases)) {
+        tair_aliases <- unlist(strsplit(gene_summary$otheraliases, ", "))
+        tair_matches <- grep("^AT[1-5MC]G\\d{5}$", tair_aliases, value = TRUE) # TAIR gene format
+        if (length(tair_matches) > 0) {
+          tair_id <- tair_matches[1] # Take the first matching TAIR ID
+        }
+      }
+    }
+    
+    return(c(gene_id = gene_id, tair_id = tair_id))
+  } else {
+    return(c(gene_id = NA, tair_id = NA))
+  }
+}
+
+# Apply function to all accessions
+gene_tair_info <- t(sapply(protein_accessions, get_gene_and_tair))
+gene_tair_df <- data.frame(Accession = protein_accessions,
+                           GeneID = gene_tair_info[, "gene_id"],
+                           TAIR_ID = gene_tair_info[, "tair_id"])
+
+# Save results
+write.table(gene_tair_df, "gene_ids_with_tair.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# Extract only TAIR IDs
+tair_ids_only <- gene_tair_df$TAIR_ID
+
+# Save TAIR IDs to a separate file
+write.table(tair_ids_only, "tair_ids_only.txt", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+# Read original TAIR ID list
+tair_ids <- readLines("tair_ids_only.txt")
+
+# Remove duplicates
+unique_tair_ids <- unique(tair_ids)
+
+# Save the unique list to a new file
+writeLines(unique_tair_ids, "tair_ids_unique.txt")
+
+# Optional: Print how many duplicates were removed
+cat("Original count:", length(tair_ids), "\n")
+cat("Unique count:", length(unique_tair_ids), "\n")
+cat("Duplicates removed:", length(tair_ids) - length(unique_tair_ids), "\n")
