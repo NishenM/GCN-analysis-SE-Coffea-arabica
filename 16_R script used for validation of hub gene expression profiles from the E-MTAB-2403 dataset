@@ -1,0 +1,145 @@
+# R script used for validation of hub gene expression profiles from the E-MTAB-2403 dataset
+
+1.	
+# Script for filtering expression data by TAIR gene IDs
+
+setwd("E:\\Hub\\Expression\\AW")
+
+library(readxl)
+
+# Read the Excel file
+data <- read_excel("AW.xlsx")
+
+# Clean up column names (remove spaces)
+colnames(data) <- gsub(" ", "_", colnames(data))
+
+# Load the gene IDs
+tair_ids <- read.table("tair_ids_unique.txt", header = FALSE, stringsAsFactors = FALSE)
+
+# Filter the rows where the gene ID matches those in tair_ids_unique.txt
+filtered_data <- data[data$Gene_ID %in% tair_ids$V1, ]
+
+# Save the filtered data to a CSV file
+write.csv(filtered_data, "filtered_data.csv", row.names = FALSE)
+
+2.
+# Script for generating a gene expression heatmap
+
+setwd("E:\\Hub\\Expression\\AW")
+
+# Load required libraries
+library(tidyverse)
+library(reshape2)
+library(ggplot2)
+
+# Load the filtered data
+data <- read.csv("filtered_data_3.csv")
+
+# Ensure consistent column names
+colnames(data) <- gsub("\\.", "_", colnames(data))
+
+# Reshape data from wide to long format for plotting
+data_long <- melt(data,
+                  id.vars = "Gene_ID",
+                  variable.name = "Condition",
+                  value.name = "FPKM")
+
+# Ensure the correct order of timepoints
+data_long$Condition <- factor(data_long$Condition,
+                              levels = c("SE_5D", "SE_10D", "SE_15D", "WT_L"))
+
+# Save the heatmap as a PDF
+pdf("SE_Heatmap_23.pdf", width = 9, height = 16)
+
+ggplot(data_long, aes(x = Condition, y = Gene_ID, fill = FPKM)) +
+  geom_tile(color = "white") +
+  scale_fill_gradientn(
+    colours = c("white", "#b2e2e2", "#66c2a4", "#2ca25f", "#006d2c", "purple"),
+    limits = c(0, max(data_long$FPKM, na.rm = TRUE)),
+    name = "FPKM"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12, hjust = 0.5),
+    panel.grid = element_blank()
+  ) +
+  labs(x = "", y = "Gene ID", title = "Gene Expression Heatmap (FPKM)") +
+  guides(
+    fill = guide_colorbar(
+      barheight = 75,              
+      frame.colour = "black",   
+      frame.linewidth = 0.1   
+    )
+  )
+
+dev.off()
+
+3.
+# Script for identifying upregulated and downregulated genes (SE vs WT) using log2 fold change
+
+# Load the required libraries
+library(tidyverse)
+
+# Load the filtered data
+data <- read.csv("filtered_data_3.csv")
+
+# Ensure consistent column names
+colnames(data) <- gsub("\\.", "_", colnames(data))
+
+# Calculate log2 FC for each condition (SE vs WT)
+data_long <- data %>%
+  mutate(
+    log2FC_5D_WT = log2(SE_5D / WT_L),
+    log2FC_10D_WT = log2(SE_10D / WT_L),
+    log2FC_15D_WT = log2(SE_15D / WT_L)
+  )
+
+# Determine if the gene is upregulated or downregulated for each condition
+data_long <- data_long %>%
+  mutate(
+    Status_5D = case_when(
+      log2FC_5D_WT >= 2 ~ "Upregulated",
+      log2FC_5D_WT <= -2 ~ "Downregulated",
+      TRUE ~ "No Change"
+    ),
+    Status_10D = case_when(
+      log2FC_10D_WT >= 2 ~ "Upregulated",
+      log2FC_10D_WT <= -2 ~ "Downregulated",
+      TRUE ~ "No Change"
+    ),
+    Status_15D = case_when(
+      log2FC_15D_WT >= 2 ~ "Upregulated",
+      log2FC_15D_WT <= -2 ~ "Downregulated",
+      TRUE ~ "No Change"
+    )
+  )
+
+# Create the CSV output with the necessary columns
+output_data <- data_long %>%
+  select(Gene_ID, SE_5D, SE_10D, SE_15D, WT_L, Status_5D, Status_10D, Status_15D)
+
+# Combine the status for each timepoint into a single column for final output
+output_data_combined <- output_data %>%
+  mutate(
+    Upregulated_Downregulated = case_when(
+      Status_5D == "Upregulated" ~ "Upregulated",
+      Status_10D == "Upregulated" ~ "Upregulated",
+      Status_15D == "Upregulated" ~ "Upregulated",
+      Status_5D == "Downregulated" ~ "Downregulated",
+      Status_10D == "Downregulated" ~ "Downregulated",
+      Status_15D == "Downregulated" ~ "Downregulated",
+      TRUE ~ "No Change"
+    )
+  ) %>%
+  select(Gene_ID, SE_5D, SE_10D, SE_15D, WT_L, Upregulated_Downregulated)
+
+
+# Count the number of upregulated and downregulated genes
+counts <- table(output_data_combined$Upregulated_Downregulated)
+
+# Print the count of upregulated and downregulated genes
+print(counts)
+
+# Save the output as a CSV file
+write.csv(output_data_combined, "Gene_Expression_Comparison_SE_vs_WT_3.csv", row.names = FALSE)
